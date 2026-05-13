@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -331,6 +333,28 @@ def _build_transcribe_url_response(
         "transcript_markdown": transcript_markdown,
     }
     return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Keep the public transcribe-url API on the fixed response contract."""
+    if not request.url.path.startswith("/api/transcribe-url"):
+        return await request_validation_exception_handler(request, exc)
+
+    errors = exc.errors()
+    message = errors[0].get("msg", "Invalid request") if errors else "Invalid request"
+    return JSONResponse(
+        status_code=422,
+        content=_build_transcribe_url_response(
+            status="error",
+            source_url="",
+            error={
+                "code": "validation_error",
+                "message": message,
+                "details": errors,
+            },
+        ),
+    )
 
 
 def _build_transcribe_url_task_response(task_id: str, task_data: dict) -> dict:
