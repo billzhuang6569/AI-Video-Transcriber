@@ -8,8 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     ca-certificates \
-    gcc \
-    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # 先升级 pip，再按 requirements 安装（与本地 `pip install -r requirements.txt` 行为一致，取满足下界的最新版）
@@ -26,7 +24,8 @@ RUN mkdir -p temp
 # 设置环境变量
 ENV HOST=0.0.0.0
 ENV PORT=8000
-ENV WHISPER_MODEL_SIZE=base
+ENV TRANSCRIPTION_PROVIDER=openai
+ENV OPENAI_TRANSCRIPTION_MAX_MB=24
 ENV UPLOAD_MAX_MB=200
 
 # 暴露端口

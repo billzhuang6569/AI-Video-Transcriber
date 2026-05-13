@@ -13,9 +13,9 @@ An AI-powered tool to transcribe and summarize videos and podcasts — paste a U
 ## ✨ Features
 
 - 🎥 **Multi-Platform Support**: Works with YouTube, TikTok, Bilibili, Apple Podcasts, SoundCloud, and 30+ more
-- 📁 **Local File Upload**: Drag-and-drop or pick a file — supported formats include `.txt` (treated as transcript text), `.mp3`, `.mp4`, `.m4a`, `.wav`, `.webm`, `.mkv`, `.ogg`, `.flac`. Media is normalized with FFmpeg for Whisper; the same optimize → translate → summarize pipeline runs as for URLs
-- ⚡ **Subtitle-First Architecture**: For platforms with native subtitles (e.g. YouTube), transcripts are extracted instantly — no audio download needed. Whisper is only used as a fallback, making the whole pipeline dramatically faster.
-- 🗣️ **Intelligent Transcription**: High-accuracy speech-to-text using Faster-Whisper when subtitles aren't available
+- 📁 **Local File Upload**: Drag-and-drop or pick a file — supported formats include `.txt` (treated as transcript text), `.mp3`, `.mp4`, `.m4a`, `.wav`, `.webm`, `.mkv`, `.ogg`, `.flac`. Media is normalized with FFmpeg for the configured transcription API; the same optimize → translate → summarize pipeline runs as for URLs
+- ⚡ **Subtitle-First Architecture**: For platforms with native subtitles (e.g. YouTube), transcripts are extracted instantly — no audio download needed. The transcription API is only used as a fallback.
+- 🗣️ **API-based Transcription**: Speech-to-text uses hosted APIs instead of a local Whisper model. Supported channels: OpenAI-compatible audio transcription, OpenRouter audio transcription, and ElevenLabs Speech to Text (`scribe_v2`).
 - 🤖 **AI Text Optimization**: Automatic typo correction, sentence completion, and intelligent paragraphing
 - 🌍 **Multi-Language Summaries**: Generate intelligent summaries in multiple languages
 - 🔧 **Bring Your Own Model**: Configure any OpenAI-compatible API endpoint (OpenAI, OpenRouter, local LLM, etc.) directly in the UI — enter your API Base URL and API Key, then click **Fetch** to auto-discover all available models and select the one you want
@@ -30,7 +30,7 @@ An AI-powered tool to transcribe and summarize videos and podcasts — paste a U
 
 - Python 3.8+
 - FFmpeg (required for yt-dlp audio extraction and for normalizing uploaded media)
-- An API key from any OpenAI-compatible provider (OpenAI, OpenRouter, etc.) — configured directly in the UI, no server-side env var needed
+- A transcription API key. The UI supports OpenRouter and ElevenLabs; server-side env vars can also use OpenAI-compatible transcription.
 
 ### Installation
 
@@ -91,8 +91,13 @@ sudo yum install ffmpeg
 3. **Configure Environment Variables** *(optional)*
 ```bash
 # If you prefer server-side defaults, set these — otherwise configure via the UI
-export OPENAI_API_KEY="your_api_key_here"
-export OPENAI_BASE_URL="https://openrouter.ai/api/v1"  # any OpenAI-compatible endpoint
+export TRANSCRIPTION_PROVIDER="openrouter"   # openai / openrouter / elevenlabs
+export OPENROUTER_API_KEY="your_transcription_key_here"
+export OPENAI_TRANSCRIPTION_MODEL="openai/whisper-large-v3-turbo"
+
+# Summary / translation can use a separate OpenAI-compatible chat endpoint
+export OPENAI_API_KEY="your_summary_key_here"
+export OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
 
 ### Start the Service
@@ -118,7 +123,9 @@ This keeps the SSE connection stable throughout long tasks (30–60+ min).
 ```bash
 source venv/bin/activate
 export OPENAI_API_KEY=your_api_key_here         # optional: server-side default
-# export OPENAI_BASE_URL=https://openrouter.ai/api/v1  # optional: server-side default
+export TRANSCRIPTION_PROVIDER=openrouter
+export OPENROUTER_API_KEY=your_transcription_key_here
+export OPENAI_TRANSCRIPTION_MODEL=openai/whisper-large-v3-turbo
 python3 start.py --prod
 ```
 
@@ -128,14 +135,15 @@ python3 start.py --prod
    - **Video / podcast URL**: Paste a link from YouTube, Bilibili, or any other supported platform into the input field
    - **Local file**: Drag a file onto the dashed upload area (or click to browse). Same **Transcribe** button starts the job; uploads use the same API route as URLs (`POST /api/process-video` with multipart `file`), which helps when a reverse proxy only allows that path
 2. **Select Summary Language**: Choose the output language from the dropdown next to the input area
-3. **(Optional) Configure AI Model**: Click **AI Settings** to expand the panel
-   - Enter your **API Base URL** (e.g. `https://openrouter.ai/api/v1`) and **API Key**
-   - Click **Fetch** to auto-load all models from that provider
-   - Select the model you want — or leave blank to use the server default
+3. **(Optional) Configure APIs**: Click **AI Settings** to expand the panel
+   - Choose the transcription channel: **OpenRouter** or **ElevenLabs**
+   - For OpenRouter, choose `openai/whisper-large-v3-turbo`, `openai/whisper-large-v3`, or `google/chirp-3`
+   - For ElevenLabs, use `scribe_v2` and enter your ElevenLabs API key
+   - Separately configure the summary/translation chat endpoint with **API Base URL**, **API Key**, **Fetch**, and model selection
 4. **Start Processing**: Click the **Transcribe** button. For **URL** jobs, the progress bar shows which mode is active:
    - **⚡ Subtitle** (green) — native subtitles found, transcript extracted in seconds
-   - **🎙 Whisper** (amber) — no subtitles available, downloading audio for transcription
-   For **local uploads**, media is normalized with FFmpeg then transcribed with Whisper; plain **`.txt`** files skip download/Whisper and go straight into the text pipeline (optimize → summary, and translation when languages differ).
+   - **🎙 Transcription API** (amber) — no subtitles available, downloading audio for API transcription
+   For **local uploads**, media is normalized with FFmpeg then transcribed through the configured API; plain **`.txt`** files skip download/transcription and go straight into the text pipeline (optimize → summary, and translation when languages differ).
 5. **View Results**: Review the optimized transcript and AI summary
    - If transcript language ≠ selected summary language, a **Translation** tab appears automatically
 6. **Download Files**: Save Markdown-formatted files (Transcript / Translation / Summary)
@@ -145,9 +153,9 @@ python3 start.py --prod
 ### Backend Stack
 - **FastAPI**: Modern Python web framework
 - **yt-dlp**: Video downloading and processing
-- **FFmpeg**: Audio extraction and local upload normalization (mono 16 kHz for Whisper)
-- **Faster-Whisper**: Efficient speech transcription
-- **OpenAI API**: Intelligent text summarization
+- **FFmpeg**: Audio extraction and local upload normalization for API transcription
+- **OpenRouter / ElevenLabs / OpenAI-compatible transcription APIs**: Speech transcription
+- **OpenAI API**: Text optimization, translation, and summarization
 
 ### Frontend Stack
 - **HTML5 + CSS3**: Responsive interface design
@@ -184,28 +192,59 @@ AI-Video-Transcriber/
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `OPENAI_API_KEY` | API key (server-side default) | - | No — can be set in UI instead |
+| `OPENAI_API_KEY` | API key for summary/translation and OpenAI transcription fallback | - | No if configured in UI |
+| `TRANSCRIPTION_PROVIDER` | Transcription channel: `openai`, `openrouter`, or `elevenlabs` | `openai` | No |
+| `OPENROUTER_API_KEY` | OpenRouter transcription API key | - | Only for OpenRouter server default |
+| `OPENAI_TRANSCRIPTION_API_KEY` | OpenAI/OpenRouter transcription API key | falls back to `OPENAI_API_KEY` | No if configured in UI |
+| `OPENAI_TRANSCRIPTION_BASE_URL` | OpenAI-compatible transcription base URL | provider default | No |
+| `OPENAI_TRANSCRIPTION_MODEL` | OpenAI/OpenRouter transcription model | provider default | No |
+| `ELEVENLABS_API_KEY` | ElevenLabs API key for Speech to Text | - | Only for ElevenLabs server default |
+| `ELEVENLABS_BASE_URL` | ElevenLabs API base URL | `https://api.elevenlabs.io` | No |
+| `ELEVENLABS_TRANSCRIPTION_MODEL` | ElevenLabs speech-to-text model | `scribe_v2` | No |
+| `OPENAI_TRANSCRIPTION_MAX_MB` | Safe per-request upload limit for transcription chunks | `24` | No |
 | `HOST` | Server address | `0.0.0.0` | No |
 | `PORT` | Server port | `8000` | No |
-| `WHISPER_MODEL_SIZE` | Whisper model size | `base` | No |
 | `UPLOAD_MAX_MB` | Maximum upload size for local files (MB) | `200` | No |
 
 An optional dedicated endpoint `POST /api/process-upload` exists with the same behavior as sending `file` to `/api/process-video`.
 
-### Whisper Model Size Options
+For OpenRouter audio transcription, set:
 
-| Model | Parameters | English-only | Multilingual | Speed | Memory Usage |
-|-------|------------|--------------|--------------|-------|--------------|
-| tiny | 39 M | ✓ | ✓ | Fast | Low |
-| base | 74 M | ✓ | ✓ | Medium | Low |
-| small | 244 M | ✓ | ✓ | Medium | Medium |
-| medium | 769 M | ✓ | ✓ | Slow | Medium |
-| large | 1550 M | ✗ | ✓ | Very Slow | High |
+```bash
+export TRANSCRIPTION_PROVIDER="openrouter"
+export OPENROUTER_API_KEY="your_openrouter_key"
+export OPENAI_TRANSCRIPTION_MODEL="openai/whisper-large-v3-turbo"
+```
+
+For ElevenLabs Speech to Text, set:
+
+```bash
+export TRANSCRIPTION_PROVIDER="elevenlabs"
+export ELEVENLABS_API_KEY="your_elevenlabs_key"
+export ELEVENLABS_TRANSCRIPTION_MODEL="scribe_v2"
+```
+
+### Server API
+
+Use `POST /api/transcribe-url` to send a media URL and receive the transcript directly:
+
+```bash
+curl -X POST http://localhost:8000/api/transcribe-url \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+    "transcription_provider": "openrouter",
+    "transcription_model": "openai/whisper-large-v3-turbo",
+    "transcription_api_key": "your_transcription_key"
+  }'
+```
+
+The response includes `source_type`, `video_title`, `detected_language`, `transcript`, and `transcript_markdown`.
 
 ## 🔧 FAQ
 
 ### Q: Why is transcription slow?
-A: Transcription speed depends on video length, Whisper model size, and hardware performance. Try using smaller models (like tiny or base) to improve speed.
+A: Transcription speed depends on video length, subtitle availability, download speed, and your selected transcription provider response time.
 
 ### Q: Which video platforms are supported?
 A: All platforms supported by yt-dlp, including but not limited to: YouTube, TikTok, Facebook, Instagram, Twitter, Bilibili, Youku, iQiyi, Tencent Video, etc.
@@ -220,12 +259,12 @@ A: AI features require an API key from any OpenAI-compatible provider (OpenAI, O
 A: In most cases this is an environment configuration issue rather than a code bug. Please check:
 - Ensure a virtualenv is activated: `source venv/bin/activate`
 - Install deps inside the venv: `pip install -r requirements.txt`
-- Configure your API key in the **AI Settings** panel, or set `OPENAI_API_KEY` as an env var
+- Configure your API keys in the **AI Settings** panel, or set `OPENAI_API_KEY` plus the transcription provider env vars
 - Install FFmpeg: `brew install ffmpeg` (macOS) / `sudo apt install ffmpeg` (Debian/Ubuntu)
 - If port 8000 is occupied, stop the old process or change `PORT`
 
 ### Q: How to handle long videos?
-A: The system can process videos of any length, but processing time will increase accordingly. For very long videos, consider using smaller Whisper models.
+A: The server compresses audio and automatically chunks files above the API upload limit. Very long videos still take longer and may incur higher API usage.
 
 ### Q: How to use Docker for deployment?
 A: Docker provides the easiest deployment method:
@@ -274,47 +313,24 @@ docker-compose build --no-cache
 ### Q: What are the memory requirements?
 A: Memory usage varies depending on the deployment method and workload:
 
-**Docker Deployment:**
-- **Base memory**: ~128MB for idle container
-- **During processing**: 500MB - 2GB depending on video length and Whisper model
-- **Docker image size**: ~1.6GB disk space required
-- **Recommended**: 4GB+ RAM for smooth operation
-
-**Traditional Deployment:**
-- **Base memory**: ~50-100MB for FastAPI server
-- **Whisper models memory usage**:
-  - `tiny`: ~150MB
-  - `base`: ~250MB  
-  - `small`: ~750MB
-  - `medium`: ~1.5GB
-  - `large`: ~3GB
-- **Peak usage**: Base + Model + Video processing (~500MB additional)
-
-**Memory Optimization Tips:**
-```bash
-# Use smaller Whisper model to reduce memory usage
-WHISPER_MODEL_SIZE=tiny  # or base
-
-# For Docker, limit container memory if needed
-docker run -m 1g -p 8000:8000 --env-file .env ai-video-transcriber
-
-# Monitor memory usage
-docker stats ai-video-transcriber-ai-video-transcriber-1
-```
+**Docker / traditional deployment:**
+- **Base memory**: roughly 100-200MB while idle
+- **During processing**: mostly FFmpeg / yt-dlp working memory; no local Whisper model is loaded
+- **Recommended**: 1GB+ RAM for normal API deployment, more for concurrent long-video jobs
 
 ### Q: Network connection errors or timeouts?
 A: If you encounter network-related errors during video downloading or API calls, try these solutions:
 
 **Common Network Issues:**
 - Video download fails with "Unable to extract" or timeout errors
-- OpenAI API calls return connection timeout or DNS resolution failures
+- AI provider API calls return connection timeout or DNS resolution failures
 - Docker image pull fails or is extremely slow
 
 **Solutions:**
 1. **Switch VPN/Proxy**: Try connecting to a different VPN server or switch your proxy settings
 2. **Check Network Stability**: Ensure your internet connection is stable
 3. **Retry After Network Change**: Wait 30-60 seconds after changing network settings before retrying
-4. **Use Alternative Endpoints**: If using custom OpenAI endpoints, verify they're accessible from your network
+4. **Use Alternative Endpoints**: If using custom AI provider endpoints, verify they're accessible from your network
 5. **Docker Network Issues**: Restart Docker Desktop if container networking fails
 
 **Quick Network Test:**
@@ -332,7 +348,7 @@ docker pull hello-world
 ## 🎯 Supported Languages
 
 ### Transcription
-- Supports 100+ languages through Whisper
+- Supports automatic language detection through the configured transcription provider
 - Automatic language detection
 - High accuracy for major languages
 
@@ -358,12 +374,12 @@ docker pull hello-world
 
 - **Processing Time Estimates**:
 
-  | Video Length | Subtitle Mode | Whisper Mode | Notes |
+  | Video Length | Subtitle Mode | API Transcription Mode | Notes |
   |-------------|---------------|--------------|-------|
   | 1 minute | ~5s | 30s–1 min | Subtitle mode needs no audio download |
   | 5 minutes | ~10s | 2–5 min | YouTube auto-captions trigger subtitle mode |
   | 15 minutes | ~15s | 5–15 min | Most YouTube videos support subtitle mode |
-  | 30+ minutes | ~20s | 15–60 min | Podcast/audio-only always uses Whisper |
+  | 30+ minutes | ~20s | 15–60 min | Podcast/audio-only always uses the transcription API |
 
 ## 🤝 Contributing
 
@@ -379,9 +395,8 @@ We welcome Issues and Pull Requests!
 ## Acknowledgments
 
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Powerful video downloading tool
-- [Faster-Whisper](https://github.com/guillaumekln/faster-whisper) - Efficient Whisper implementation
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
-- [OpenAI](https://openai.com/) - Intelligent text processing API
+- [OpenAI](https://openai.com/) - Audio transcription and intelligent text processing API
 
 ## 📞 Contact
 

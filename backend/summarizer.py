@@ -1282,7 +1282,7 @@ Rules:
         """
         # 简单的语言检测逻辑：查找转录文本中的语言标记
         if "**检测语言:**" in transcript:
-            # 从Whisper转录中提取检测到的语言
+            # 从转写结果中提取检测到的语言
             lines = transcript.split('\n')
             for line in lines:
                 if "**检测语言:**" in line:

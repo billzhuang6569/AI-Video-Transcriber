@@ -15,7 +15,6 @@ def check_dependencies():
         "fastapi": "fastapi",
         "uvicorn": "uvicorn", 
         "yt-dlp": "yt_dlp",
-        "faster-whisper": "faster_whisper",
         "openai": "openai"
     }
     
@@ -56,23 +55,39 @@ def check_ffmpeg():
 
 def setup_environment():
     """设置环境变量"""
-    # 设置OpenAI配置
-    if not os.getenv("OPENAI_API_KEY"):
-        print("⚠️  警告: 未设置OPENAI_API_KEY环境变量")
-        print("请设置环境变量: export OPENAI_API_KEY=your_api_key_here")
-        return False
-    
-    print("✅ 已设置OpenAI API Key")
-    
+    provider = (os.getenv("TRANSCRIPTION_PROVIDER") or "openai").strip().lower()
+    if provider == "elevenlabs":
+        transcription_key = (
+            os.getenv("ELEVENLABS_API_KEY")
+            or os.getenv("OPENAI_TRANSCRIPTION_API_KEY")
+        )
+    elif provider == "openrouter":
+        transcription_key = (
+            os.getenv("OPENROUTER_API_KEY")
+            or os.getenv("OPENAI_TRANSCRIPTION_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+        )
+    else:
+        transcription_key = (
+            os.getenv("OPENAI_TRANSCRIPTION_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+        )
+
+    if transcription_key:
+        print(f"✅ 转写 API 已配置，provider={provider}")
+    else:
+        print("⚠️  警告: 未设置服务端转写 API Key")
+        print("   可在页面 AI Settings 中填写，或设置 OPENAI_TRANSCRIPTION_API_KEY / ELEVENLABS_API_KEY")
+
+    if os.getenv("OPENAI_API_KEY"):
+        print("✅ 已设置摘要/翻译 API Key")
+    else:
+        print("⚠️  警告: 未设置 OPENAI_API_KEY；摘要/翻译可在页面 AI Settings 中填写")
+
     if not os.getenv("OPENAI_BASE_URL"):
-        os.environ["OPENAI_BASE_URL"] = "https://oneapi.basevec.com/v1"
-        print("✅ 已设置OpenAI Base URL")
-    
-    # 设置其他默认配置
-    if not os.getenv("WHISPER_MODEL_SIZE"):
-        os.environ["WHISPER_MODEL_SIZE"] = "base"
-    
-    print("🔑 OpenAI API已配置，摘要功能可用")
+        print("✅ 未设置摘要 API Base URL，将使用 OpenAI 默认端点")
+
+    print("🔑 API 配置检查完成")
     return True
 
 def main():

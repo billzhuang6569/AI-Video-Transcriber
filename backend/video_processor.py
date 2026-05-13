@@ -20,9 +20,9 @@ class VideoProcessor:
             'outtmpl': '%(title)s.%(ext)s',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
-                # 直接在提取阶段转换为单声道 16k（空间小且稳定）
+                # 直接在提取阶段转换为单声道 16k（适合转写 API 上传）
                 'preferredcodec': 'm4a',
-                'preferredquality': '192'
+                'preferredquality': '64'
             }],
             # 全局FFmpeg参数：单声道 + 16k 采样率 + faststart
             'postprocessor_args': ['-ac', '1', '-ar', '16000', '-movflags', '+faststart'],
@@ -34,7 +34,7 @@ class VideoProcessor:
 
     async def normalize_local_media_to_m4a(self, input_path: Path, output_dir: Path) -> str:
         """
-        将本地上传的音视频转为单声道 16kHz AAC m4a，供 Faster-Whisper 使用（与 yt-dlp 后处理参数对齐）。
+        将本地上传的音视频转为单声道 16kHz AAC m4a，供转写 API 使用（与 yt-dlp 后处理参数对齐）。
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         unique_id = str(uuid.uuid4())[:8]
@@ -43,7 +43,7 @@ class VideoProcessor:
         cmd = [
             "ffmpeg", "-y", "-nostdin", "-i", str(input_path.resolve()),
             "-vn", "-ac", "1", "-ar", "16000",
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart",
             str(out_path.resolve()),
         ]
 
@@ -143,7 +143,7 @@ class VideoProcessor:
                 logger.warning("字幕解析结果为空，回退音频模式")
                 return None, video_title, None
 
-            # 5. 格式化为与 Whisper 输出兼容的 Markdown
+            # 5. 格式化为与转写输出兼容的 Markdown
             formatted = self._format_subtitle_entries(entries, file_lang)
             logger.info(f"字幕获取成功: lang={file_lang}, {len(entries)} 条目")
             return formatted, video_title, file_lang
@@ -307,7 +307,7 @@ class VideoProcessor:
         return time_str
 
     def _format_subtitle_entries(self, entries: list, language: str) -> str:
-        """将字幕条目格式化为与 Whisper 输出兼容的 Markdown，供下游管道直接使用。"""
+        """将字幕条目格式化为与转写输出兼容的 Markdown，供下游管道直接使用。"""
         lines = [
             "# Video Transcription",
             "",

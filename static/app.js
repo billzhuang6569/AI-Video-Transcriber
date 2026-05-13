@@ -22,7 +22,13 @@ class VideoTranscriber {
         video_url_placeholder:   'Paste YouTube, Tiktok, Bilibili or other platform video URLs...',
         start_transcription:     'Transcribe',
         ai_settings:             'AI Settings',
-        model_base_url:          'Model API Base URL',
+        transcription_channel:    'Transcription Channel',
+        provider_openrouter:      'OpenRouter',
+        provider_elevenlabs:      'ElevenLabs',
+        transcription_api_key:    'Transcription API Key',
+        transcription_api_key_placeholder: 'sk-or-v1-... / xi-...',
+        transcription_model:      'Transcription Model',
+        model_base_url:          'Summary API Base URL',
         model_base_url_placeholder: 'https://openrouter.ai/api/v1',
         api_key:                 'API Key',
         api_key_placeholder:     'sk-...',
@@ -50,7 +56,7 @@ class VideoTranscriber {
         subtitle_found:          'Subtitles found! Processing text…',
         no_subtitle:             'No subtitles found, downloading audio…',
         mode_subtitle:           '⚡ Subtitle',
-        mode_whisper:            '🎙 Whisper',
+        mode_whisper:            '🎙 Transcription API',
         completed:               'Done!',
         error_invalid_url:       'Please enter a valid video URL',
         error_processing_failed: 'Processing failed: ',
@@ -72,7 +78,13 @@ class VideoTranscriber {
         video_url_placeholder:   '请输入视频链接…',
         start_transcription:     '开始转录',
         ai_settings:             'AI 设置',
-        model_base_url:          'Model API 地址',
+        transcription_channel:    '转录渠道',
+        provider_openrouter:      'OpenRouter',
+        provider_elevenlabs:      'ElevenLabs',
+        transcription_api_key:    '转录 API Key',
+        transcription_api_key_placeholder: 'sk-or-v1-... / xi-...',
+        transcription_model:      '转录模型',
+        model_base_url:          '摘要 API 地址',
         model_base_url_placeholder: 'https://openrouter.ai/api/v1',
         api_key:                 'API Key',
         api_key_placeholder:     'sk-...',
@@ -100,7 +112,7 @@ class VideoTranscriber {
         subtitle_found:          '字幕获取成功！正在处理文本…',
         no_subtitle:             '未找到字幕，正在下载音频…',
         mode_subtitle:           '⚡ 字幕模式',
-        mode_whisper:            '🎙 Whisper 模式',
+        mode_whisper:            '🎙 API 转录模式',
         completed:               '处理完成！',
         error_invalid_url:       '请输入有效的视频链接',
         error_processing_failed: '处理失败：',
@@ -153,6 +165,9 @@ class VideoTranscriber {
     // settings
     this.settingsToggle     = document.getElementById('settingsToggle');
     this.settingsBody       = document.getElementById('settingsBody');
+    this.transcriptionProvider = document.getElementById('transcriptionProvider');
+    this.transcriptionApiKey   = document.getElementById('transcriptionApiKey');
+    this.transcriptionModel    = document.getElementById('transcriptionModel');
     this.modelBaseUrl       = document.getElementById('modelBaseUrl');
     this.apiKeyInput        = document.getElementById('apiKeyInput');
     this.fetchModelsBtn     = document.getElementById('fetchModelsBtn');
@@ -189,11 +204,24 @@ class VideoTranscriber {
     }, 900);
     this.modelBaseUrl.addEventListener('input', debouncedFetch);
     this.apiKeyInput.addEventListener('input', debouncedFetch);
+    this.transcriptionProvider.addEventListener('change', () => {
+      this._syncTranscriptionProviderUI();
+      this._saveSettings();
+    });
 
     // Persist settings
-    [this.modelBaseUrl, this.apiKeyInput, this.modelSelect, this.summaryLangSel].forEach(el => {
+    [
+      this.transcriptionProvider,
+      this.transcriptionApiKey,
+      this.transcriptionModel,
+      this.modelBaseUrl,
+      this.apiKeyInput,
+      this.modelSelect,
+      this.summaryLangSel,
+    ].forEach(el => {
       el.addEventListener('change', () => this._saveSettings());
     });
+    this.transcriptionApiKey.addEventListener('input', () => this._saveSettings());
 
     // Tabs
     this.tabBtns.forEach(btn => {
@@ -263,6 +291,7 @@ class VideoTranscriber {
       const v = this.t(el.dataset.i18nPlaceholder);
       if (typeof v === 'string') el.placeholder = v;
     });
+    this._syncTranscriptionProviderUI();
   }
 
   /* ── Settings persistence ─────────────────────────────── */
@@ -271,6 +300,9 @@ class VideoTranscriber {
       baseUrl:  this.modelBaseUrl.value,
       apiKey:   this.apiKeyInput.value,
       model:    this.modelSelect.value,
+      transcriptionProvider: this.transcriptionProvider.value,
+      transcriptionApiKey: this.transcriptionApiKey.value,
+      transcriptionModel: this.transcriptionModel.value,
       summaryLang: this.summaryLangSel.value,
     };
     try { localStorage.setItem('vt_settings', JSON.stringify(s)); } catch (_) {}
@@ -283,6 +315,10 @@ class VideoTranscriber {
       const s = JSON.parse(raw);
       if (s.baseUrl)     this.modelBaseUrl.value = s.baseUrl;
       if (s.apiKey)      this.apiKeyInput.value  = s.apiKey;
+      if (s.transcriptionProvider) this.transcriptionProvider.value = s.transcriptionProvider;
+      if (s.transcriptionApiKey) this.transcriptionApiKey.value = s.transcriptionApiKey;
+      this._savedTranscriptionModel = s.transcriptionModel || '';
+      this._syncTranscriptionProviderUI();
       if (s.summaryLang) this.summaryLangSel.value = s.summaryLang;
       // Model options will be restored after fetching
       this._savedModel = s.model || '';
@@ -297,6 +333,46 @@ class VideoTranscriber {
         }
       }
     } catch (_) {}
+  }
+
+  _syncTranscriptionProviderUI() {
+    if (!this.transcriptionProvider || !this.transcriptionModel) return;
+    const provider = this.transcriptionProvider.value || 'openrouter';
+    const current = this._savedTranscriptionModel || this.transcriptionModel.value;
+    const models = provider === 'elevenlabs'
+      ? [{ id: 'scribe_v2', name: 'scribe_v2' }]
+      : [
+          { id: 'openai/whisper-large-v3-turbo', name: 'openai/whisper-large-v3-turbo' },
+          { id: 'openai/whisper-large-v3', name: 'openai/whisper-large-v3' },
+          { id: 'google/chirp-3', name: 'google/chirp-3' },
+        ];
+
+    this.transcriptionModel.innerHTML = '';
+    models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.name;
+      this.transcriptionModel.appendChild(opt);
+    });
+    this.transcriptionModel.value = models.some(m => m.id === current)
+      ? current
+      : models[0].id;
+    this._savedTranscriptionModel = '';
+
+    if (this.transcriptionApiKey) {
+      this.transcriptionApiKey.placeholder = provider === 'elevenlabs'
+        ? 'xi-...'
+        : 'sk-or-v1-...';
+    }
+  }
+
+  _appendTranscriptionSettings(fd) {
+    const provider = this.transcriptionProvider.value || 'openrouter';
+    const key = this.transcriptionApiKey.value.trim();
+    const model = this.transcriptionModel.value;
+    fd.append('transcription_provider', provider);
+    if (key) fd.append('transcription_api_key', key);
+    if (model) fd.append('transcription_model', model);
   }
 
   /* ── Fetch models ─────────────────────────────────────── */
@@ -383,6 +459,7 @@ class VideoTranscriber {
       if (apiKey)  fd.append('api_key',       apiKey);
       if (baseUrl) fd.append('model_base_url', baseUrl);
       if (modelId) fd.append('model_id',       modelId);
+      this._appendTranscriptionSettings(fd);
 
       const resp = await fetch(`${this.apiBase}/process-video`, { method: 'POST', body: fd });
       if (!resp.ok) {
@@ -440,6 +517,7 @@ class VideoTranscriber {
       if (apiKey)  fd.append('api_key',       apiKey);
       if (baseUrl) fd.append('model_base_url', baseUrl);
       if (modelId) fd.append('model_id',       modelId);
+      this._appendTranscriptionSettings(fd);
 
       const resp = await fetch(`${this.apiBase}/process-video`, { method: 'POST', body: fd });
       if (!resp.ok) {
@@ -639,7 +717,7 @@ class VideoTranscriber {
     if      (m.includes('获取成功') || m.includes('subtitle found'))        label = this.t('subtitle_found');
     else if (m.includes('未找到字幕') || m.includes('no subtitle'))         label = this.t('no_subtitle');
     else if (m.includes('检测') && (m.includes('字幕') || m.includes('subtitle'))) label = this.t('detecting_subtitles');
-    // ── Audio / Whisper path ────────────────────────────────────
+    // ── Audio / transcription API path ───────────────────────────
     else if (m.includes('下载') || m.includes('download'))  label = this.t('downloading_video');
     else if (m.includes('解析') || m.includes('pars'))      label = this.t('parsing_video');
     else if (m.includes('转录') || m.includes('transcrib')) label = this.t('transcribing_audio');

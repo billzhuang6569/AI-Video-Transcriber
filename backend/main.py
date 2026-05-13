@@ -12,6 +12,7 @@ import uuid
 import json
 import re
 import openai
+from pydantic import BaseModel, Field
 
 from video_processor import VideoProcessor
 from transcriber import Transcriber
@@ -109,6 +110,18 @@ UPLOAD_ALLOWED_EXT = frozenset({".txt", ".mp3", ".mp4", ".m4a", ".wav", ".webm",
 UPLOAD_MAX_MB = int(os.getenv("UPLOAD_MAX_MB", "200"))
 
 
+class TranscribeUrlRequest(BaseModel):
+    url: str = Field(..., min_length=1)
+    language: Optional[str] = None
+    prefer_subtitles: bool = True
+    transcription_provider: str = ""
+    api_key: str = ""
+    model_base_url: str = ""
+    transcription_api_key: str = ""
+    transcription_base_url: str = ""
+    transcription_model: str = ""
+
+
 def _sanitize_title_for_filename(title: str) -> str:
     """将视频标题清洗为安全的文件名片段。"""
     if not title:
@@ -122,7 +135,7 @@ def _sanitize_title_for_filename(title: str) -> str:
 
 
 def _txt_to_raw_transcript_markdown(body: str) -> str:
-    """将纯文本包装为与 Whisper 输出结构一致的 Markdown。"""
+    """将纯文本包装为与转写输出结构一致的 Markdown。"""
     text = body.strip() if body.strip() else "(empty)"
     return "\n".join([
         "# Video Transcription",
@@ -134,6 +147,66 @@ def _txt_to_raw_transcript_markdown(body: str) -> str:
         "",
         text,
     ])
+
+
+def _build_request_transcriber(
+    api_key: str = "",
+    model_base_url: str = "",
+    transcription_provider: str = "",
+    transcription_api_key: str = "",
+    transcription_base_url: str = "",
+    transcription_model: str = "",
+) -> Transcriber:
+    """按请求参数构造转写 API 客户端。"""
+    provider = (transcription_provider or os.getenv("TRANSCRIPTION_PROVIDER") or "").strip().lower()
+    elevenlabs_key_is_set = bool(os.getenv("ELEVENLABS_API_KEY"))
+    openai_key_is_set = bool(
+        os.getenv("OPENROUTER_API_KEY")
+        or os.getenv("OPENAI_TRANSCRIPTION_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+    )
+    server_transcription_key_is_set = elevenlabs_key_is_set if provider == "elevenlabs" else openai_key_is_set
+    dedicated_base_is_set = bool(os.getenv("OPENAI_TRANSCRIPTION_BASE_URL"))
+    return Transcriber(
+        api_key=(
+            transcription_api_key
+            or (api_key if not server_transcription_key_is_set else None)
+            or None
+        ),
+        base_url=(
+            transcription_base_url
+            or (
+                model_base_url
+                if not (server_transcription_key_is_set or dedicated_base_is_set)
+                else None
+            )
+            or None
+        ),
+        model=(transcription_model or None),
+        provider=(transcription_provider or None),
+    )
+
+
+def _transcript_markdown_to_text(markdown: str) -> str:
+    """从内部 Markdown 转录格式中提取纯文本。"""
+    body_lines = []
+    in_body = False
+    for line in (markdown or "").splitlines():
+        stripped = line.strip()
+        if stripped == "## Transcription Content":
+            in_body = True
+            continue
+        if not in_body:
+            continue
+        if not stripped:
+            if body_lines and body_lines[-1] != "":
+                body_lines.append("")
+            continue
+        if stripped.startswith("**[") and stripped.endswith("]**"):
+            continue
+        body_lines.append(line)
+
+    return "\n".join(body_lines).strip()
 
 
 async def _run_post_extract_pipeline(
@@ -292,6 +365,17 @@ async def read_root():
     """返回前端页面"""
     return FileResponse(str(PROJECT_ROOT / "static" / "index.html"))
 
+
+@app.get("/api/health")
+async def health_check():
+    """服务器健康检查，便于部署后探活。"""
+    return {
+        "status": "ok",
+        "transcription_provider": transcriber.provider,
+        "transcription_configured": transcriber.is_configured,
+        "transcription_model": transcriber.model,
+    }
+
 @app.post("/api/models")
 async def list_models(
     base_url: str = Form(default=""),
@@ -321,6 +405,9 @@ async def _enqueue_upload_job(
     api_key: str,
     model_base_url: str,
     model_id: str,
+    transcription_provider: str,
+    transcription_api_key: str,
+    transcription_model: str,
 ) -> dict:
     """保存上传文件并入队 process_upload_task，返回 {task_id, message}。"""
     raw_name = file.filename or "upload.bin"
@@ -389,6 +476,9 @@ async def _enqueue_upload_job(
             api_key,
             model_base_url,
             model_id,
+            transcription_provider,
+            transcription_api_key,
+            transcription_model,
         )
     )
     active_tasks[task_id] = bg
@@ -403,6 +493,9 @@ async def process_video(
     api_key: str = Form(default=""),
     model_base_url: str = Form(default=""),
     model_id: str = Form(default=""),
+    transcription_provider: str = Form(default=""),
+    transcription_api_key: str = Form(default=""),
+    transcription_model: str = Form(default=""),
     file: Optional[UploadFile] = File(None),
 ):
     """
@@ -412,7 +505,14 @@ async def process_video(
     try:
         if file is not None and (file.filename or "").strip():
             return await _enqueue_upload_job(
-                file, summary_language, api_key, model_base_url, model_id
+                file,
+                summary_language,
+                api_key,
+                model_base_url,
+                model_id,
+                transcription_provider,
+                transcription_api_key,
+                transcription_model,
             )
 
         stripped = (url or "").strip()
@@ -450,7 +550,19 @@ async def process_video(
         save_tasks(tasks)
         
         # 创建并跟踪异步任务
-        task = asyncio.create_task(process_video_task(task_id, url, summary_language, api_key, model_base_url, model_id))
+        task = asyncio.create_task(
+            process_video_task(
+                task_id,
+                url,
+                summary_language,
+                api_key,
+                model_base_url,
+                model_id,
+                transcription_provider,
+                transcription_api_key,
+                transcription_model,
+            )
+        )
         active_tasks[task_id] = task
         
         return {"task_id": task_id, "message": "任务已创建，正在处理中..."}
@@ -468,6 +580,9 @@ async def process_video_task(
     api_key: str = "",
     model_base_url: str = "",
     model_id: str = "",
+    transcription_provider: str = "",
+    transcription_api_key: str = "",
+    transcription_model: str = "",
 ):
     """
     异步处理视频任务
@@ -498,7 +613,7 @@ async def process_video_task(
         subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(url, TEMP_DIR)
 
         if subtitle_text:
-            # ── 快速路径：有字幕，跳过音频下载和 Whisper ──────────────────
+            # ── 快速路径：有字幕，跳过音频下载和转写 API ───────────────
             video_title = sub_title
             raw_script = subtitle_text
             # 把语言写入 transcriber，保持下游逻辑一致
@@ -511,7 +626,7 @@ async def process_video_task(
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
         else:
-            # ── 慢速路径：无字幕，下载音频 → Whisper 转录 ─────────────────
+            # ── 慢速路径：无字幕，下载音频 → 转写 API 转录 ─────────────
             tasks[task_id].update({
                 "progress": 15,
                 "message": "未找到字幕，正在下载视频音频..."
@@ -530,14 +645,22 @@ async def process_video_task(
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
+            request_transcriber = _build_request_transcriber(
+                api_key=api_key,
+                model_base_url=model_base_url,
+                transcription_provider=transcription_provider,
+                transcription_api_key=transcription_api_key,
+                transcription_model=transcription_model,
+            )
+
             tasks[task_id].update({
                 "progress": 40,
-                "message": "正在转录音频（Whisper）..."
+                "message": "正在调用转写 API 转录音频..."
             })
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
-            raw_script = await transcriber.transcribe(audio_path)
+            raw_script = await request_transcriber.transcribe(audio_path)
 
         await _run_post_extract_pipeline(
             task_id=task_id,
@@ -579,11 +702,97 @@ async def process_upload(
     api_key: str = Form(default=""),
     model_base_url: str = Form(default=""),
     model_id: str = Form(default=""),
+    transcription_provider: str = Form(default=""),
+    transcription_api_key: str = Form(default=""),
+    transcription_model: str = Form(default=""),
 ):
     """独立上传入口；逻辑与 multipart 带 file 的 /api/process-video 相同。"""
     return await _enqueue_upload_job(
-        file, summary_language, api_key, model_base_url, model_id
+        file,
+        summary_language,
+        api_key,
+        model_base_url,
+        model_id,
+        transcription_provider,
+        transcription_api_key,
+        transcription_model,
     )
+
+
+@app.post("/api/transcribe-url")
+async def transcribe_url(payload: TranscribeUrlRequest):
+    """
+    同步 URL 转写接口：服务端收到媒体地址后直接返回转写结果。
+
+    适合服务器部署后的 API 调用；只做转写，不强制进入摘要/翻译管线。
+    """
+    url = payload.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    audio_path = None
+    try:
+        raw_script = None
+        video_title = None
+        detected_language = None
+        source_type = "audio"
+
+        if payload.prefer_subtitles:
+            subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(url, TEMP_DIR)
+            video_title = sub_title or video_title
+            if subtitle_text:
+                raw_script = subtitle_text
+                video_title = sub_title or "unknown"
+                detected_language = sub_lang
+                source_type = "subtitle"
+
+        if raw_script is None:
+            audio_path, video_title = await video_processor.download_and_convert(
+                url,
+                TEMP_DIR,
+                prefetched_title=video_title or None,
+            )
+            request_transcriber = _build_request_transcriber(
+                api_key=payload.api_key,
+                model_base_url=payload.model_base_url,
+                transcription_provider=payload.transcription_provider,
+                transcription_api_key=payload.transcription_api_key,
+                transcription_base_url=payload.transcription_base_url,
+                transcription_model=payload.transcription_model,
+            )
+            raw_script = await request_transcriber.transcribe(
+                audio_path,
+                language=payload.language,
+            )
+            detected_language = request_transcriber.get_detected_language(raw_script)
+
+        detected_language = detected_language or transcriber.get_detected_language(raw_script)
+        detected_language = (detected_language or "").strip()
+        if not detected_language:
+            detected_language = translator.infer_language_code(raw_script)
+        detected_language = translator.normalize_lang_code(detected_language) or detected_language
+
+        return {
+            "status": "completed",
+            "source_url": url,
+            "source_type": source_type,
+            "video_title": video_title,
+            "detected_language": detected_language,
+            "transcript": _transcript_markdown_to_text(raw_script),
+            "transcript_markdown": raw_script,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"URL 转写失败: {e}")
+        raise HTTPException(status_code=500, detail=f"转写失败: {str(e)}")
+    finally:
+        if audio_path:
+            try:
+                Path(audio_path).unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 async def process_upload_task(
@@ -596,6 +805,9 @@ async def process_upload_task(
     api_key: str = "",
     model_base_url: str = "",
     model_id: str = "",
+    transcription_provider: str = "",
+    transcription_api_key: str = "",
+    transcription_model: str = "",
 ):
     source_ref = f"upload:{original_name}"
     try:
@@ -642,14 +854,22 @@ async def process_upload_task(
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
+            request_transcriber = _build_request_transcriber(
+                api_key=api_key,
+                model_base_url=model_base_url,
+                transcription_provider=transcription_provider,
+                transcription_api_key=transcription_api_key,
+                transcription_model=transcription_model,
+            )
+
             tasks[task_id].update({
                 "progress": 40,
-                "message": "正在转录音频（Whisper）...",
+                "message": "正在调用转写 API 转录音频...",
             })
             save_tasks(tasks)
             await broadcast_task_update(task_id, tasks[task_id])
 
-            raw_script = await transcriber.transcribe(audio_path)
+            raw_script = await request_transcriber.transcribe(audio_path)
 
         await _run_post_extract_pipeline(
             task_id=task_id,
