@@ -385,6 +385,9 @@ class VideoTranscriber {
         this.transcriptionProvider.value = provider;
         this._savedTranscriptionModel = cfg.transcription_model || '';
       }
+      if (this.serverTranscriptionProviders[this.transcriptionProvider.value]) {
+        this.transcriptionApiKey.value = '';
+      }
       this._syncTranscriptionProviderUI();
     } catch (_) {}
   }
