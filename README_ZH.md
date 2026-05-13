@@ -239,7 +239,34 @@ curl -X POST http://localhost:8000/api/transcribe-url \
   }'
 ```
 
-响应包含 `source_type`、`video_title`、`detected_language`、`transcript` 和 `transcript_markdown`。
+不管底层使用 OpenRouter、ElevenLabs 还是字幕提取，响应都保持固定结构：
+
+```json
+{
+  "status": "completed",
+  "data": {
+    "source": {
+      "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+      "type": "audio",
+      "title": "Video title"
+    },
+    "transcription": {
+      "provider": "openrouter",
+      "model": "openai/whisper-large-v3-turbo",
+      "language": "zh",
+      "language_probability": 0.98,
+      "text": "Plain transcript text",
+      "segments": [
+        {"start": 1.0, "end": 9.0, "text": "Segment text"}
+      ],
+      "markdown": "# Video Transcription..."
+    }
+  },
+  "error": null
+}
+```
+
+为兼容旧调用方，顶层仍会保留 `source_url`、`source_type`、`video_title`、`detected_language`、`transcript`、`transcript_markdown` 这些别名字段。
 
 ## 🔧 常见问题
 

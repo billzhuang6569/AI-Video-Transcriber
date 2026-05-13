@@ -209,6 +209,130 @@ def _transcript_markdown_to_text(markdown: str) -> str:
     return "\n".join(body_lines).strip()
 
 
+def _time_to_seconds(time_str: str) -> Optional[float]:
+    """把 MM:SS / HH:MM:SS 时间戳转为秒。"""
+    try:
+        parts = [int(part) for part in time_str.strip().split(":")]
+    except ValueError:
+        return None
+    if len(parts) == 2:
+        minutes, seconds = parts
+        return float(minutes * 60 + seconds)
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+        return float(hours * 3600 + minutes * 60 + seconds)
+    return None
+
+
+def _extract_transcript_metadata(markdown: str) -> dict:
+    """从内部 Markdown 转录格式提取语言、置信度与分段。"""
+    detected_language = None
+    language_probability = None
+    segments = []
+    current_segment = None
+
+    timestamp_pattern = re.compile(
+        r"^\*\*\[(?P<start>\d{1,2}:\d{2}(?::\d{2})?)\s+-\s+"
+        r"(?P<end>\d{1,2}:\d{2}(?::\d{2})?)\]\*\*$"
+    )
+
+    in_body = False
+    for line in (markdown or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("**Detected Language:**"):
+            detected_language = stripped.split("**Detected Language:**", 1)[-1].strip() or None
+            continue
+        if stripped.startswith("**Language Probability:**"):
+            raw_probability = stripped.split("**Language Probability:**", 1)[-1].strip()
+            try:
+                language_probability = float(raw_probability)
+            except ValueError:
+                language_probability = None
+            continue
+        if stripped == "## Transcription Content":
+            in_body = True
+            continue
+        if not in_body:
+            continue
+
+        match = timestamp_pattern.match(stripped)
+        if match:
+            if current_segment and current_segment["text"].strip():
+                current_segment["text"] = current_segment["text"].strip()
+                segments.append(current_segment)
+            current_segment = {
+                "start": _time_to_seconds(match.group("start")),
+                "end": _time_to_seconds(match.group("end")),
+                "text": "",
+            }
+            continue
+
+        if current_segment is not None and stripped:
+            if current_segment["text"]:
+                current_segment["text"] += "\n"
+            current_segment["text"] += line.strip()
+
+    if current_segment and current_segment["text"].strip():
+        current_segment["text"] = current_segment["text"].strip()
+        segments.append(current_segment)
+
+    return {
+        "detected_language": detected_language,
+        "language_probability": language_probability,
+        "segments": segments,
+    }
+
+
+def _build_transcribe_url_response(
+    *,
+    status: str,
+    source_url: str,
+    source_type: Optional[str] = None,
+    video_title: Optional[str] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    detected_language: Optional[str] = None,
+    transcript_markdown: str = "",
+    error: Optional[dict] = None,
+) -> dict:
+    """固定对外 API 响应格式，同时保留旧字段作为兼容别名。"""
+    metadata = _extract_transcript_metadata(transcript_markdown)
+    language = (
+        detected_language
+        or metadata["detected_language"]
+        or ""
+    )
+    text = _transcript_markdown_to_text(transcript_markdown)
+    response = {
+        "status": status,
+        "data": {
+            "source": {
+                "url": source_url,
+                "type": source_type or "",
+                "title": video_title or "",
+            },
+            "transcription": {
+                "provider": provider or "",
+                "model": model or "",
+                "language": language,
+                "language_probability": metadata["language_probability"],
+                "text": text,
+                "segments": metadata["segments"],
+                "markdown": transcript_markdown,
+            },
+        } if status == "completed" else None,
+        "error": error,
+        # Backward-compatible aliases.
+        "source_url": source_url,
+        "source_type": source_type or "",
+        "video_title": video_title or "",
+        "detected_language": language,
+        "transcript": text,
+        "transcript_markdown": transcript_markdown,
+    }
+    return response
+
+
 async def _run_post_extract_pipeline(
     task_id: str,
     raw_script: str,
@@ -728,9 +852,17 @@ async def transcribe_url(payload: TranscribeUrlRequest):
     """
     url = payload.url.strip()
     if not url:
-        raise HTTPException(status_code=400, detail="url is required")
+        return JSONResponse(
+            status_code=400,
+            content=_build_transcribe_url_response(
+                status="error",
+                source_url="",
+                error={"code": "bad_request", "message": "url is required"},
+            ),
+        )
 
     audio_path = None
+    request_transcriber = None
     try:
         raw_script = None
         video_title = None
@@ -772,21 +904,35 @@ async def transcribe_url(payload: TranscribeUrlRequest):
             detected_language = translator.infer_language_code(raw_script)
         detected_language = translator.normalize_lang_code(detected_language) or detected_language
 
-        return {
-            "status": "completed",
-            "source_url": url,
-            "source_type": source_type,
-            "video_title": video_title,
-            "detected_language": detected_language,
-            "transcript": _transcript_markdown_to_text(raw_script),
-            "transcript_markdown": raw_script,
-        }
+        provider = "subtitle"
+        model = ""
+        if request_transcriber is not None:
+            provider = request_transcriber.provider
+            model = request_transcriber.model
+
+        return _build_transcribe_url_response(
+            status="completed",
+            source_url=url,
+            source_type=source_type,
+            video_title=video_title,
+            provider=provider,
+            model=model,
+            detected_language=detected_language,
+            transcript_markdown=raw_script,
+        )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"URL 转写失败: {e}")
-        raise HTTPException(status_code=500, detail=f"转写失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content=_build_transcribe_url_response(
+                status="error",
+                source_url=url,
+                error={"code": "transcription_failed", "message": str(e)},
+            ),
+        )
     finally:
         if audio_path:
             try:

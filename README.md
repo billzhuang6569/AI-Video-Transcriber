@@ -239,7 +239,34 @@ curl -X POST http://localhost:8000/api/transcribe-url \
   }'
 ```
 
-The response includes `source_type`, `video_title`, `detected_language`, `transcript`, and `transcript_markdown`.
+The response shape is stable across providers:
+
+```json
+{
+  "status": "completed",
+  "data": {
+    "source": {
+      "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+      "type": "audio",
+      "title": "Video title"
+    },
+    "transcription": {
+      "provider": "openrouter",
+      "model": "openai/whisper-large-v3-turbo",
+      "language": "zh",
+      "language_probability": 0.98,
+      "text": "Plain transcript text",
+      "segments": [
+        {"start": 1.0, "end": 9.0, "text": "Segment text"}
+      ],
+      "markdown": "# Video Transcription..."
+    }
+  },
+  "error": null
+}
+```
+
+For backward compatibility, the top-level aliases `source_url`, `source_type`, `video_title`, `detected_language`, `transcript`, and `transcript_markdown` are still included.
 
 ## 🔧 FAQ
 
