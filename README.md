@@ -226,7 +226,7 @@ export ELEVENLABS_TRANSCRIPTION_MODEL="scribe_v2"
 
 ### Server API
 
-Use `POST /api/transcribe-url` to send a media URL and receive the transcript directly:
+Use `POST /api/transcribe-url` to submit a media URL. The API returns a `task_id` immediately, then you poll `GET /api/transcribe-url/{task_id}` until the task is completed:
 
 ```bash
 curl -X POST http://localhost:8000/api/transcribe-url \
@@ -237,13 +237,33 @@ curl -X POST http://localhost:8000/api/transcribe-url \
     "transcription_model": "openai/whisper-large-v3-turbo",
     "transcription_api_key": "your_transcription_key"
   }'
+
+curl http://localhost:8000/api/transcribe-url/TASK_ID
 ```
 
 The response shape is stable across providers:
 
 ```json
 {
+  "status": "processing",
+  "task_id": "TASK_ID",
+  "poll_url": "/api/transcribe-url/TASK_ID",
+  "progress": 45,
+  "message": "音频准备完成，正在调用转写 API...",
+  "data": null,
+  "error": null
+}
+```
+
+When completed:
+
+```json
+{
   "status": "completed",
+  "task_id": "TASK_ID",
+  "poll_url": "/api/transcribe-url/TASK_ID",
+  "progress": 100,
+  "message": "转写完成",
   "data": {
     "source": {
       "url": "https://www.youtube.com/watch?v=VIDEO_ID",
@@ -266,7 +286,7 @@ The response shape is stable across providers:
 }
 ```
 
-For backward compatibility, the top-level aliases `source_url`, `source_type`, `video_title`, `detected_language`, `transcript`, and `transcript_markdown` are still included.
+For backward compatibility, completed responses still include the top-level aliases `source_url`, `source_type`, `video_title`, `detected_language`, `transcript`, and `transcript_markdown`.
 
 ## 🔧 FAQ
 

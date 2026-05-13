@@ -333,6 +333,36 @@ def _build_transcribe_url_response(
     return response
 
 
+def _build_transcribe_url_task_response(task_id: str, task_data: dict) -> dict:
+    """把异步 URL 转写任务状态转换为固定 API 响应。"""
+    status = task_data.get("status") or "processing"
+    error = None
+    if status == "error":
+        error = {
+            "code": task_data.get("error_code") or "transcription_failed",
+            "message": task_data.get("error") or task_data.get("message") or "任务失败",
+        }
+
+    response = _build_transcribe_url_response(
+        status=status,
+        source_url=task_data.get("source_url") or task_data.get("url") or "",
+        source_type=task_data.get("source_type") or "",
+        video_title=task_data.get("video_title") or "",
+        provider=task_data.get("transcription_provider") or "",
+        model=task_data.get("transcription_model") or "",
+        detected_language=task_data.get("detected_language") or "",
+        transcript_markdown=task_data.get("transcript_markdown") or "",
+        error=error,
+    )
+    response.update({
+        "task_id": task_id,
+        "poll_url": f"/api/transcribe-url/{task_id}",
+        "progress": task_data.get("progress", 0),
+        "message": task_data.get("message") or "",
+    })
+    return response
+
+
 async def _run_post_extract_pipeline(
     task_id: str,
     raw_script: str,
@@ -846,7 +876,7 @@ async def process_upload(
 @app.post("/api/transcribe-url")
 async def transcribe_url(payload: TranscribeUrlRequest):
     """
-    同步 URL 转写接口：服务端收到媒体地址后直接返回转写结果。
+    异步 URL 转写接口：服务端收到媒体地址后返回 task_id，客户端轮询结果。
 
     适合服务器部署后的 API 调用；只做转写，不强制进入摘要/翻译管线。
     """
@@ -861,6 +891,63 @@ async def transcribe_url(payload: TranscribeUrlRequest):
             ),
         )
 
+    task_id = str(uuid.uuid4())
+    provider = (
+        payload.transcription_provider
+        or os.getenv("TRANSCRIPTION_PROVIDER")
+        or ""
+    ).strip().lower()
+    model = payload.transcription_model.strip()
+    tasks[task_id] = {
+        "kind": "transcribe_url",
+        "status": "processing",
+        "progress": 0,
+        "message": "转写任务已创建",
+        "source_url": url,
+        "source_type": "",
+        "video_title": "",
+        "detected_language": "",
+        "transcription_provider": provider,
+        "transcription_model": model,
+        "transcript": "",
+        "transcript_markdown": "",
+        "error": None,
+    }
+    save_tasks(tasks)
+
+    bg = asyncio.create_task(process_transcribe_url_task(task_id, payload))
+    active_tasks[task_id] = bg
+
+    return JSONResponse(
+        status_code=202,
+        content=_build_transcribe_url_task_response(task_id, tasks[task_id]),
+    )
+
+
+@app.get("/api/transcribe-url/{task_id}")
+async def get_transcribe_url_result(task_id: str):
+    """轮询 URL 转写任务，返回固定格式。"""
+    task_data = tasks.get(task_id)
+    if not task_data or task_data.get("kind") != "transcribe_url":
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "error",
+                "task_id": task_id,
+                "poll_url": f"/api/transcribe-url/{task_id}",
+                "progress": 0,
+                "message": "任务不存在",
+                "data": None,
+                "error": {"code": "not_found", "message": "任务不存在"},
+            },
+        )
+
+    return _build_transcribe_url_task_response(task_id, task_data)
+
+
+async def process_transcribe_url_task(task_id: str, payload: TranscribeUrlRequest):
+    """后台执行 URL 转写任务。"""
+    url = payload.url.strip()
     audio_path = None
     request_transcriber = None
     try:
@@ -868,6 +955,12 @@ async def transcribe_url(payload: TranscribeUrlRequest):
         video_title = None
         detected_language = None
         source_type = "audio"
+
+        tasks[task_id].update({
+            "progress": 5,
+            "message": "正在检测可用字幕...",
+        })
+        save_tasks(tasks)
 
         if payload.prefer_subtitles:
             subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(url, TEMP_DIR)
@@ -877,13 +970,37 @@ async def transcribe_url(payload: TranscribeUrlRequest):
                 video_title = sub_title or "unknown"
                 detected_language = sub_lang
                 source_type = "subtitle"
+                tasks[task_id].update({
+                    "progress": 50,
+                    "message": "字幕获取成功，正在整理结果...",
+                    "source_type": source_type,
+                    "video_title": video_title,
+                    "detected_language": detected_language or "",
+                    "transcription_provider": "subtitle",
+                    "transcription_model": "",
+                })
+                save_tasks(tasks)
 
         if raw_script is None:
+            tasks[task_id].update({
+                "progress": 20,
+                "message": "未找到字幕，正在下载视频音频...",
+            })
+            save_tasks(tasks)
+
             audio_path, video_title = await video_processor.download_and_convert(
                 url,
                 TEMP_DIR,
                 prefetched_title=video_title or None,
             )
+            tasks[task_id].update({
+                "progress": 45,
+                "message": "音频准备完成，正在调用转写 API...",
+                "video_title": video_title or "",
+                "source_type": source_type,
+            })
+            save_tasks(tasks)
+
             request_transcriber = _build_request_transcriber(
                 api_key=payload.api_key,
                 model_base_url=payload.model_base_url,
@@ -897,6 +1014,10 @@ async def transcribe_url(payload: TranscribeUrlRequest):
                 language=payload.language,
             )
             detected_language = request_transcriber.get_detected_language(raw_script)
+            tasks[task_id].update({
+                "transcription_provider": request_transcriber.provider,
+                "transcription_model": request_transcriber.model,
+            })
 
         detected_language = detected_language or transcriber.get_detected_language(raw_script)
         detected_language = (detected_language or "").strip()
@@ -910,35 +1031,40 @@ async def transcribe_url(payload: TranscribeUrlRequest):
             provider = request_transcriber.provider
             model = request_transcriber.model
 
-        return _build_transcribe_url_response(
-            status="completed",
-            source_url=url,
-            source_type=source_type,
-            video_title=video_title,
-            provider=provider,
-            model=model,
-            detected_language=detected_language,
-            transcript_markdown=raw_script,
-        )
+        tasks[task_id].update({
+            "status": "completed",
+            "progress": 100,
+            "message": "转写完成",
+            "source_url": url,
+            "source_type": source_type,
+            "video_title": video_title or "",
+            "detected_language": detected_language or "",
+            "transcription_provider": provider,
+            "transcription_model": model,
+            "transcript": _transcript_markdown_to_text(raw_script),
+            "transcript_markdown": raw_script,
+            "error": None,
+        })
+        save_tasks(tasks)
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"URL 转写失败: {e}")
-        return JSONResponse(
-            status_code=500,
-            content=_build_transcribe_url_response(
-                status="error",
-                source_url=url,
-                error={"code": "transcription_failed", "message": str(e)},
-            ),
-        )
+        tasks[task_id].update({
+            "status": "error",
+            "progress": 100,
+            "message": f"转写失败: {str(e)}",
+            "error": str(e),
+            "error_code": "transcription_failed",
+        })
+        save_tasks(tasks)
     finally:
         if audio_path:
             try:
                 Path(audio_path).unlink(missing_ok=True)
             except Exception:
                 pass
+        if task_id in active_tasks:
+            del active_tasks[task_id]
 
 
 async def process_upload_task(

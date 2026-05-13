@@ -226,7 +226,7 @@ export ELEVENLABS_TRANSCRIPTION_MODEL="scribe_v2"
 
 ### 服务端 API
 
-使用 `POST /api/transcribe-url` 发送媒体地址并直接返回转写结果：
+使用 `POST /api/transcribe-url` 提交媒体地址。接口会立即返回 `task_id`，然后用 `GET /api/transcribe-url/{task_id}` 轮询结果：
 
 ```bash
 curl -X POST http://localhost:8000/api/transcribe-url \
@@ -237,13 +237,33 @@ curl -X POST http://localhost:8000/api/transcribe-url \
     "transcription_model": "openai/whisper-large-v3-turbo",
     "transcription_api_key": "your_transcription_key"
   }'
+
+curl http://localhost:8000/api/transcribe-url/TASK_ID
 ```
 
 不管底层使用 OpenRouter、ElevenLabs 还是字幕提取，响应都保持固定结构：
 
 ```json
 {
+  "status": "processing",
+  "task_id": "TASK_ID",
+  "poll_url": "/api/transcribe-url/TASK_ID",
+  "progress": 45,
+  "message": "音频准备完成，正在调用转写 API...",
+  "data": null,
+  "error": null
+}
+```
+
+任务完成后：
+
+```json
+{
   "status": "completed",
+  "task_id": "TASK_ID",
+  "poll_url": "/api/transcribe-url/TASK_ID",
+  "progress": 100,
+  "message": "转写完成",
   "data": {
     "source": {
       "url": "https://www.youtube.com/watch?v=VIDEO_ID",
@@ -266,7 +286,7 @@ curl -X POST http://localhost:8000/api/transcribe-url \
 }
 ```
 
-为兼容旧调用方，顶层仍会保留 `source_url`、`source_type`、`video_title`、`detected_language`、`transcript`、`transcript_markdown` 这些别名字段。
+为兼容旧调用方，完成态响应仍会保留 `source_url`、`source_type`、`video_title`、`detected_language`、`transcript`、`transcript_markdown` 这些别名字段。
 
 ## 🔧 常见问题
 
