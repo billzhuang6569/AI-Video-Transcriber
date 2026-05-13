@@ -27,6 +27,7 @@ class VideoTranscriber {
         provider_elevenlabs:      'ElevenLabs',
         transcription_api_key:    'Transcription API Key',
         transcription_api_key_placeholder: 'sk-or-v1-... / xi-...',
+        transcription_server_key: (provider) => `Server key configured for ${provider}`,
         transcription_model:      'Transcription Model',
         model_base_url:          'Summary API Base URL',
         model_base_url_placeholder: 'https://openrouter.ai/api/v1',
@@ -83,6 +84,7 @@ class VideoTranscriber {
         provider_elevenlabs:      'ElevenLabs',
         transcription_api_key:    '转录 API Key',
         transcription_api_key_placeholder: 'sk-or-v1-... / xi-...',
+        transcription_server_key: (provider) => `服务器已配置 ${provider} Key`,
         transcription_model:      '转录模型',
         model_base_url:          '摘要 API 地址',
         model_base_url_placeholder: 'https://openrouter.ai/api/v1',
@@ -134,6 +136,7 @@ class VideoTranscriber {
     this._bindEvents();
     this._loadSettings();
     this._switchLang('en');
+    this._loadServerTranscriptionConfig();
   }
 
   /* ── Elements ─────────────────────────────────────────── */
@@ -317,6 +320,7 @@ class VideoTranscriber {
       if (s.apiKey)      this.apiKeyInput.value  = s.apiKey;
       if (s.transcriptionProvider) this.transcriptionProvider.value = s.transcriptionProvider;
       if (s.transcriptionApiKey) this.transcriptionApiKey.value = s.transcriptionApiKey;
+      this._savedTranscriptionProvider = s.transcriptionProvider || '';
       this._savedTranscriptionModel = s.transcriptionModel || '';
       this._syncTranscriptionProviderUI();
       if (s.summaryLang) this.summaryLangSel.value = s.summaryLang;
@@ -360,10 +364,29 @@ class VideoTranscriber {
     this._savedTranscriptionModel = '';
 
     if (this.transcriptionApiKey) {
-      this.transcriptionApiKey.placeholder = provider === 'elevenlabs'
-        ? 'xi-...'
-        : 'sk-or-v1-...';
+      const configured = this.serverTranscriptionProviders && this.serverTranscriptionProviders[provider];
+      this.transcriptionApiKey.placeholder = configured
+        ? this.t('transcription_server_key')(provider)
+        : provider === 'elevenlabs'
+          ? 'xi-...'
+          : 'sk-or-v1-...';
     }
+  }
+
+  async _loadServerTranscriptionConfig() {
+    try {
+      const resp = await fetch(`${this.apiBase}/health`, { cache: 'no-store' });
+      if (!resp.ok) return;
+      const cfg = await resp.json();
+      this.serverTranscriptionProviders = cfg.transcription_providers_configured || {};
+
+      const provider = cfg.transcription_provider;
+      if (cfg.transcription_configured && provider && !this._savedTranscriptionProvider) {
+        this.transcriptionProvider.value = provider;
+        this._savedTranscriptionModel = cfg.transcription_model || '';
+      }
+      this._syncTranscriptionProviderUI();
+    } catch (_) {}
   }
 
   _appendTranscriptionSettings(fd) {

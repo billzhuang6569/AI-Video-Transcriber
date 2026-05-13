@@ -547,11 +547,24 @@ async def read_root():
 @app.get("/api/health")
 async def health_check():
     """服务器健康检查，便于部署后探活。"""
+    configured_providers = {
+        "openrouter": bool(
+            os.getenv("OPENROUTER_API_KEY")
+            or os.getenv("OPENAI_TRANSCRIPTION_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+        ),
+        "elevenlabs": bool(os.getenv("ELEVENLABS_API_KEY")),
+        "openai": bool(
+            os.getenv("OPENAI_TRANSCRIPTION_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+        ),
+    }
     return {
         "status": "ok",
         "transcription_provider": transcriber.provider,
         "transcription_configured": transcriber.is_configured,
         "transcription_model": transcriber.model,
+        "transcription_providers_configured": configured_providers,
     }
 
 @app.post("/api/models")

@@ -8,6 +8,25 @@ import sys
 import subprocess
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def load_env_file():
+    """Load project-local .env values without requiring an extra dependency."""
+    for env_path in (PROJECT_ROOT / ".env", PROJECT_ROOT / ".env.production"):
+        if not env_path.exists():
+            continue
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
 def check_dependencies():
     """检查依赖是否安装"""
     import sys
@@ -92,6 +111,8 @@ def setup_environment():
 
 def main():
     """主函数"""
+    load_env_file()
+
     # 检查是否使用生产模式（禁用热重载）
     production_mode = "--prod" in sys.argv or os.getenv("PRODUCTION_MODE") == "true"
     
