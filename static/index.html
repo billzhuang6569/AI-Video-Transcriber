@@ -525,6 +525,16 @@
       padding-top: 30px;
       border-top: 1px solid var(--border);
     }
+    .api-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .api-head-main {
+      min-width: 0;
+    }
     .api-kicker {
       display: inline-flex;
       align-items: center;
@@ -544,8 +554,35 @@
     .api-sub {
       color: var(--text-muted);
       font-size: 13px;
-      margin-bottom: 18px;
+      margin-bottom: 0;
       max-width: 620px;
+    }
+    .api-copy-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 34px;
+      padding: 8px 12px;
+      border: 1px solid var(--border-light);
+      border-radius: var(--r-sm);
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: border-color .2s, color .2s, background .2s, transform .1s;
+    }
+    .api-copy-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent-text);
+      background: var(--surface-3);
+    }
+    .api-copy-btn:active { transform: scale(.98); }
+    .api-copy-btn.is-copied {
+      border-color: rgba(106,184,122,.45);
+      color: var(--success);
     }
     .api-endpoints {
       display: grid;
@@ -657,6 +694,13 @@
       .settings-grid { grid-template-columns: 1fr; }
       .settings-grid .span2 { grid-column: 1; }
       .settings-body.open { max-height: 520px; }
+      .api-head {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .api-copy-btn {
+        width: 100%;
+      }
       .api-endpoints,
       .api-notes { grid-template-columns: 1fr; }
     }
@@ -886,14 +930,22 @@
   </div><!-- /result-panel -->
 
   <section class="api-guide" aria-labelledby="apiGuideTitle">
-    <div class="api-kicker">
-      <i class="fas fa-code"></i>
-      <span data-i18n="api_kicker">API Access</span>
+    <div class="api-head">
+      <div class="api-head-main">
+        <div class="api-kicker">
+          <i class="fas fa-code"></i>
+          <span data-i18n="api_kicker">API Access</span>
+        </div>
+        <h2 class="api-title" id="apiGuideTitle" data-i18n="api_title">Use it from any agent or script</h2>
+        <p class="api-sub" data-i18n="api_subtitle">
+          Submit a media URL, get a task ID immediately, then poll for the normalized transcription result.
+        </p>
+      </div>
+      <button type="button" class="api-copy-btn" id="copyApiMarkdownBtn">
+        <i class="fas fa-copy"></i>
+        <span data-i18n="api_copy_md">Copy API MD</span>
+      </button>
     </div>
-    <h2 class="api-title" id="apiGuideTitle" data-i18n="api_title">Use it from any agent or script</h2>
-    <p class="api-sub" data-i18n="api_subtitle">
-      Submit a media URL, get a task ID immediately, then poll for the normalized transcription result.
-    </p>
 
     <div class="api-endpoints">
       <div class="api-endpoint">
@@ -965,6 +1017,6 @@ curl "$BASE_URL/api/transcribe-url/TASK_ID"</code></pre>
   </div>
 </main>
 
-<script src="/static/app.js?v=20260516"></script>
+<script src="/static/app.js?v=20260516-copy-md"></script>
 </body>
 </html>

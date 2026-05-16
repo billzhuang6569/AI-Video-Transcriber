@@ -78,6 +78,9 @@ class VideoTranscriber {
         api_post_desc:           'Create an async transcription task from a public media URL.',
         api_get_desc:            'Poll until status becomes completed or error.',
         api_response_label:      'Response shape',
+        api_copy_md:             'Copy API MD',
+        api_copy_done:           'Copied',
+        api_copy_failed:         'Copy failed',
         api_note_async_title:    'Async by default',
         api_note_async_body:     'Large videos return quickly with task_id instead of blocking the request.',
         api_note_format_title:   'Fixed response',
@@ -147,6 +150,9 @@ class VideoTranscriber {
         api_post_desc:           '用公开视频或音频地址创建异步转写任务。',
         api_get_desc:            '轮询任务，直到 status 变成 completed 或 error。',
         api_response_label:      '响应结构',
+        api_copy_md:             '复制 API MD',
+        api_copy_done:           '已复制',
+        api_copy_failed:         '复制失败',
         api_note_async_title:    '默认异步',
         api_note_async_body:     '大视频不会阻塞请求，会先返回 task_id。',
         api_note_format_title:   '固定响应',
@@ -204,6 +210,7 @@ class VideoTranscriber {
     this.uploadZone         = document.getElementById('uploadZone');
     this.uploadPickBtn      = document.getElementById('uploadPickBtn');
     this.fileInput          = document.getElementById('fileInput');
+    this.copyApiMarkdownBtn = document.getElementById('copyApiMarkdownBtn');
     this.uploadMaxMb        = 200;
     this._allowedUploadExts = new Set(['.txt', '.mp3', '.mp4', '.m4a', '.wav', '.webm', '.mkv', '.ogg', '.flac']);
   }
@@ -259,6 +266,9 @@ class VideoTranscriber {
     this.dlScript.addEventListener('click',      () => this._downloadFile('script'));
     this.dlTranslation.addEventListener('click', () => this._downloadFile('translation'));
     this.dlSummary.addEventListener('click',     () => this._downloadFile('summary'));
+    if (this.copyApiMarkdownBtn) {
+      this.copyApiMarkdownBtn.addEventListener('click', () => this._copyApiMarkdown());
+    }
 
     if (this.uploadPickBtn && this.fileInput && this.uploadZone) {
       this.uploadPickBtn.addEventListener('click', (e) => {
@@ -423,6 +433,228 @@ class VideoTranscriber {
     fd.append('transcription_provider', provider);
     if (key) fd.append('transcription_api_key', key);
     if (model) fd.append('transcription_model', model);
+  }
+
+  _buildApiMarkdown() {
+    const baseUrl = window.location.origin;
+    if (this.currentLang === 'zh') {
+      return `# AI Video Transcriber API 快速说明
+
+## 基础信息
+
+- Base URL: \`${baseUrl}\`
+- 用途: 提交公开视频/音频地址，异步获取转写结果。
+- 鉴权: 当前部署已在服务端配置 OpenRouter 和 ElevenLabs Key，客户端无需传 Key。
+- 默认渠道: ElevenLabs \`scribe_v2\`。
+
+## 1. 创建异步转写任务
+
+\`\`\`bash
+curl -X POST "${baseUrl}/api/transcribe-url" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "url": "https://example.com/video.mp4",
+    "prefer_subtitles": true,
+    "transcription_provider": "elevenlabs",
+    "transcription_model": "scribe_v2"
+  }'
+\`\`\`
+
+可选转写渠道:
+
+- \`elevenlabs\`: \`scribe_v2\`
+- \`openrouter\`: \`openai/whisper-large-v3-turbo\`, \`openai/whisper-large-v3\`, \`google/chirp-3\`
+
+创建成功会返回:
+
+\`\`\`json
+{
+  "status": "processing",
+  "task_id": "TASK_ID",
+  "poll_url": "/api/transcribe-url/TASK_ID",
+  "progress": 0,
+  "message": "转写任务已创建",
+  "data": null,
+  "error": null
+}
+\`\`\`
+
+## 2. 轮询结果
+
+\`\`\`bash
+curl "${baseUrl}/api/transcribe-url/TASK_ID"
+\`\`\`
+
+任务状态:
+
+- \`processing\`: 处理中
+- \`completed\`: 已完成
+- \`error\`: 失败，查看 \`error.message\`
+
+## 3. 固定响应结构
+
+\`\`\`json
+{
+  "status": "completed",
+  "task_id": "TASK_ID",
+  "progress": 100,
+  "message": "转写完成",
+  "data": {
+    "source": {
+      "url": "https://example.com/video.mp4",
+      "type": "audio",
+      "title": "video title"
+    },
+    "transcription": {
+      "provider": "elevenlabs",
+      "model": "scribe_v2",
+      "language": "zh",
+      "language_probability": 0.98,
+      "text": "纯文本转写结果",
+      "segments": [],
+      "markdown": "# Video Transcription..."
+    }
+  },
+  "error": null
+}
+\`\`\`
+
+## Agent 使用建议
+
+1. 先调用 \`POST /api/transcribe-url\`。
+2. 读取返回的 \`task_id\`。
+3. 每 3-5 秒调用 \`GET /api/transcribe-url/{task_id}\`。
+4. 当 \`status=completed\` 时，优先读取 \`data.transcription.text\`。
+`;
+    }
+
+    return `# AI Video Transcriber API Quick Guide
+
+## Basics
+
+- Base URL: \`${baseUrl}\`
+- Purpose: Submit a public video/audio URL and receive an async transcription result.
+- Auth: This deployment stores OpenRouter and ElevenLabs keys on the server. Clients do not need to send keys.
+- Default provider: ElevenLabs \`scribe_v2\`.
+
+## 1. Create an async transcription task
+
+\`\`\`bash
+curl -X POST "${baseUrl}/api/transcribe-url" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "url": "https://example.com/video.mp4",
+    "prefer_subtitles": true,
+    "transcription_provider": "elevenlabs",
+    "transcription_model": "scribe_v2"
+  }'
+\`\`\`
+
+Available transcription channels:
+
+- \`elevenlabs\`: \`scribe_v2\`
+- \`openrouter\`: \`openai/whisper-large-v3-turbo\`, \`openai/whisper-large-v3\`, \`google/chirp-3\`
+
+Successful creation returns:
+
+\`\`\`json
+{
+  "status": "processing",
+  "task_id": "TASK_ID",
+  "poll_url": "/api/transcribe-url/TASK_ID",
+  "progress": 0,
+  "message": "Transcription task created",
+  "data": null,
+  "error": null
+}
+\`\`\`
+
+## 2. Poll for the result
+
+\`\`\`bash
+curl "${baseUrl}/api/transcribe-url/TASK_ID"
+\`\`\`
+
+Task statuses:
+
+- \`processing\`: still running
+- \`completed\`: finished
+- \`error\`: failed, inspect \`error.message\`
+
+## 3. Fixed response shape
+
+\`\`\`json
+{
+  "status": "completed",
+  "task_id": "TASK_ID",
+  "progress": 100,
+  "message": "Transcription completed",
+  "data": {
+    "source": {
+      "url": "https://example.com/video.mp4",
+      "type": "audio",
+      "title": "video title"
+    },
+    "transcription": {
+      "provider": "elevenlabs",
+      "model": "scribe_v2",
+      "language": "zh",
+      "language_probability": 0.98,
+      "text": "plain transcription text",
+      "segments": [],
+      "markdown": "# Video Transcription..."
+    }
+  },
+  "error": null
+}
+\`\`\`
+
+## Agent usage pattern
+
+1. Call \`POST /api/transcribe-url\`.
+2. Read the returned \`task_id\`.
+3. Poll \`GET /api/transcribe-url/{task_id}\` every 3-5 seconds.
+4. When \`status=completed\`, use \`data.transcription.text\` first.
+`;
+  }
+
+  async _copyApiMarkdown() {
+    if (!this.copyApiMarkdownBtn) return;
+    const text = this._buildApiMarkdown();
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        textarea.remove();
+      }
+      this._setCopyApiButtonState(true);
+    } catch (e) {
+      console.warn('API markdown copy failed:', e);
+      this._setCopyApiButtonState(false);
+    }
+  }
+
+  _setCopyApiButtonState(success) {
+    const label = this.copyApiMarkdownBtn.querySelector('span');
+    const icon = this.copyApiMarkdownBtn.querySelector('i');
+    const original = this.t('api_copy_md');
+    label.textContent = success ? this.t('api_copy_done') : this.t('api_copy_failed');
+    icon.className = success ? 'fas fa-check' : 'fas fa-exclamation-circle';
+    this.copyApiMarkdownBtn.classList.toggle('is-copied', success);
+    window.clearTimeout(this._copyApiResetTimer);
+    this._copyApiResetTimer = window.setTimeout(() => {
+      label.textContent = original;
+      icon.className = 'fas fa-copy';
+      this.copyApiMarkdownBtn.classList.remove('is-copied');
+    }, 1800);
   }
 
   /* ── Fetch models ─────────────────────────────────────── */
