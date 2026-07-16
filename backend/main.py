@@ -16,6 +16,7 @@ import re
 import openai
 from pydantic import BaseModel, Field
 
+from media_source import MediaSourceResolver
 from video_processor import VideoProcessor
 from transcriber import Transcriber
 from summarizer import Summarizer
@@ -47,6 +48,7 @@ TEMP_DIR = PROJECT_ROOT / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
 
 # 初始化处理器
+media_source_resolver = MediaSourceResolver()
 video_processor = VideoProcessor()
 transcriber = Transcriber()
 summarizer = Summarizer()
@@ -289,6 +291,10 @@ def _build_transcribe_url_response(
     *,
     status: str,
     source_url: str,
+    resolved_url: Optional[str] = None,
+    platform: Optional[str] = None,
+    input_kind: Optional[str] = None,
+    strategy: Optional[str] = None,
     source_type: Optional[str] = None,
     video_title: Optional[str] = None,
     provider: Optional[str] = None,
@@ -310,6 +316,10 @@ def _build_transcribe_url_response(
         "data": {
             "source": {
                 "url": source_url,
+                "resolved_url": resolved_url or source_url,
+                "platform": platform or "",
+                "input_kind": input_kind or "",
+                "strategy": strategy or "",
                 "type": source_type or "",
                 "title": video_title or "",
             },
@@ -326,6 +336,10 @@ def _build_transcribe_url_response(
         "error": error,
         # Backward-compatible aliases.
         "source_url": source_url,
+        "resolved_url": resolved_url or source_url,
+        "platform": platform or "",
+        "input_kind": input_kind or "",
+        "strategy": strategy or "",
         "source_type": source_type or "",
         "video_title": video_title or "",
         "detected_language": language,
@@ -370,6 +384,10 @@ def _build_transcribe_url_task_response(task_id: str, task_data: dict) -> dict:
     response = _build_transcribe_url_response(
         status=status,
         source_url=task_data.get("source_url") or task_data.get("url") or "",
+        resolved_url=task_data.get("resolved_url") or "",
+        platform=task_data.get("platform") or "",
+        input_kind=task_data.get("input_kind") or "",
+        strategy=task_data.get("strategy") or "",
         source_type=task_data.get("source_type") or "",
         video_title=task_data.get("video_title") or "",
         provider=task_data.get("transcription_provider") or "",
@@ -381,6 +399,7 @@ def _build_transcribe_url_task_response(task_id: str, task_data: dict) -> dict:
     response.update({
         "task_id": task_id,
         "poll_url": f"/api/transcribe-url/{task_id}",
+        "cancel_url": f"/api/transcribe-url/{task_id}/cancel",
         "progress": task_data.get("progress", 0),
         "message": task_data.get("message") or "",
     })
@@ -567,6 +586,8 @@ async def health_check():
         "transcription_providers_configured": configured_providers,
         "ytdlp_cookies_configured": bool(getattr(video_processor, "cookie_file", "")),
         "ytdlp_js_runtime": getattr(video_processor, "js_runtime", None) or None,
+        "tikhub_configured": media_source_resolver.tikhub_client.is_configured,
+        "tikhub_region": media_source_resolver.tikhub_client.region,
     }
 
 @app.post("/api/models")
@@ -738,6 +759,10 @@ async def process_video(
             "script": None,
             "summary": None,
             "error": None,
+            "resolved_url": "",
+            "platform": "",
+            "input_kind": "",
+            "strategy": "",
             "url": url  # 保存URL用于去重
         }
         save_tasks(tasks)
@@ -781,11 +806,11 @@ async def process_video_task(
     异步处理视频任务
     """
     try:
-        # ── 阶段一：优先尝试获取平台字幕（快速路径） ──────────────────────
+        # ── 阶段一：识别页面/直链并选择平台策略 ──────────────────────────
         tasks[task_id].update({
             "status": "processing",
-            "progress": 10,
-            "message": "正在检测视频字幕..."
+            "progress": 5,
+            "message": "正在识别媒体地址与平台策略..."
         })
         save_tasks(tasks)
         await broadcast_task_update(task_id, tasks[task_id])
@@ -803,7 +828,31 @@ async def process_video_task(
         else:
             request_summarizer = summarizer  # 全局实例（使用环境变量）
 
-        subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(url, TEMP_DIR)
+        source = await media_source_resolver.resolve(url, prefer_subtitles=True)
+        effective_media_url = source.resolved_url
+        tasks[task_id].update({
+            "progress": 10,
+            "message": (
+                "正在检测视频字幕..."
+                if source.prefer_subtitles
+                else "媒体地址已解析，正在准备音频..."
+            ),
+            "resolved_url": effective_media_url,
+            "platform": source.platform,
+            "input_kind": source.input_kind,
+            "strategy": source.strategy,
+        })
+        save_tasks(tasks)
+        await broadcast_task_update(task_id, tasks[task_id])
+
+        subtitle_text = None
+        sub_title = source.title or None
+        sub_lang = None
+        if source.prefer_subtitles:
+            subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(
+                effective_media_url,
+                TEMP_DIR,
+            )
 
         if subtitle_text:
             # ── 快速路径：有字幕，跳过音频下载和转写 API ───────────────
@@ -828,7 +877,10 @@ async def process_video_task(
             await broadcast_task_update(task_id, tasks[task_id])
 
             audio_path, video_title = await video_processor.download_and_convert(
-                url, TEMP_DIR, prefetched_title=sub_title or None
+                effective_media_url,
+                TEMP_DIR,
+                prefetched_title=sub_title or source.title or None,
+                referer=source.referer or None,
             )
 
             tasks[task_id].update({
@@ -943,6 +995,10 @@ async def transcribe_url(payload: TranscribeUrlRequest):
         "progress": 0,
         "message": "转写任务已创建",
         "source_url": url,
+        "resolved_url": "",
+        "platform": "",
+        "input_kind": "",
+        "strategy": "",
         "source_type": "",
         "video_title": "",
         "detected_language": "",
@@ -974,12 +1030,74 @@ async def get_transcribe_url_result(task_id: str):
                 "status": "error",
                 "task_id": task_id,
                 "poll_url": f"/api/transcribe-url/{task_id}",
+                "cancel_url": f"/api/transcribe-url/{task_id}/cancel",
                 "progress": 0,
                 "message": "任务不存在",
                 "data": None,
                 "error": {"code": "not_found", "message": "任务不存在"},
             },
         )
+
+    return _build_transcribe_url_task_response(task_id, task_data)
+
+
+@app.post(
+    "/api/transcribe-url/{task_id}/cancel",
+    summary="Cancel a transcription task",
+    description="Cancel a running asynchronous URL transcription task while keeping its status available for polling.",
+)
+async def cancel_transcribe_url_task(task_id: str):
+    """取消异步 URL 转写任务，并保留 cancelled 终态供后续查询。"""
+    task_data = tasks.get(task_id)
+    if not task_data or task_data.get("kind") != "transcribe_url":
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "error",
+                "task_id": task_id,
+                "poll_url": f"/api/transcribe-url/{task_id}",
+                "cancel_url": f"/api/transcribe-url/{task_id}/cancel",
+                "progress": 0,
+                "message": "任务不存在",
+                "data": None,
+                "error": {"code": "not_found", "message": "任务不存在"},
+            },
+        )
+
+    current_status = task_data.get("status") or "processing"
+    if current_status == "cancelled":
+        return _build_transcribe_url_task_response(task_id, task_data)
+
+    if current_status in {"completed", "error"}:
+        response = _build_transcribe_url_task_response(task_id, task_data)
+        response["error"] = {
+            "code": "task_not_cancellable",
+            "message": f"状态为 {current_status} 的任务无法取消",
+        }
+        return JSONResponse(status_code=409, content=response)
+
+    active_task = active_tasks.get(task_id)
+    if active_task and not active_task.done():
+        active_task.cancel()
+
+    task_data.update({
+        "status": "cancelled",
+        "progress": 100,
+        "message": "任务已取消",
+        "error": None,
+        "error_code": None,
+    })
+    save_tasks(tasks)
+    await broadcast_task_update(task_id, task_data)
+
+    if active_task:
+        try:
+            await active_task
+        except asyncio.CancelledError:
+            logger.info(f"URL 转写任务已取消: {task_id}")
+        except Exception as exc:
+            logger.warning(f"等待取消任务 {task_id} 结束时出现异常: {exc}")
+    active_tasks.pop(task_id, None)
 
     return _build_transcribe_url_task_response(task_id, task_data)
 
@@ -997,12 +1115,35 @@ async def process_transcribe_url_task(task_id: str, payload: TranscribeUrlReques
 
         tasks[task_id].update({
             "progress": 5,
-            "message": "正在检测可用字幕...",
+            "message": "正在识别媒体地址与平台策略...",
         })
         save_tasks(tasks)
 
-        if payload.prefer_subtitles:
-            subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(url, TEMP_DIR)
+        source = await media_source_resolver.resolve(
+            url,
+            prefer_subtitles=payload.prefer_subtitles,
+        )
+        effective_url = source.resolved_url
+        platform_label = source.platform if source.platform != "generic" else "通用"
+        tasks[task_id].update({
+            "progress": 10,
+            "message": (
+                f"已识别 {platform_label} 页面，正在检测字幕..."
+                if source.prefer_subtitles
+                else f"已识别 {platform_label} 媒体源，正在准备音频..."
+            ),
+            "resolved_url": effective_url,
+            "platform": source.platform,
+            "input_kind": source.input_kind,
+            "strategy": source.strategy,
+        })
+        save_tasks(tasks)
+
+        if source.prefer_subtitles:
+            subtitle_text, sub_title, sub_lang = await video_processor.fetch_subtitles(
+                effective_url,
+                TEMP_DIR,
+            )
             video_title = sub_title or video_title
             if subtitle_text:
                 raw_script = subtitle_text
@@ -1028,9 +1169,10 @@ async def process_transcribe_url_task(task_id: str, payload: TranscribeUrlReques
             save_tasks(tasks)
 
             audio_path, video_title = await video_processor.download_and_convert(
-                url,
+                effective_url,
                 TEMP_DIR,
-                prefetched_title=video_title or None,
+                prefetched_title=video_title or source.title or None,
+                referer=source.referer or None,
             )
             tasks[task_id].update({
                 "progress": 45,
@@ -1086,6 +1228,9 @@ async def process_transcribe_url_task(task_id: str, payload: TranscribeUrlReques
         })
         save_tasks(tasks)
 
+    except asyncio.CancelledError:
+        logger.info(f"URL 转写任务收到取消信号: {task_id}")
+        raise
     except Exception as e:
         logger.error(f"URL 转写失败: {e}")
         tasks[task_id].update({
@@ -1249,7 +1394,7 @@ async def task_stream(task_id: str):
                     
                     # 如果任务完成或失败，结束流
                     task_data = json.loads(data)
-                    if task_data.get("status") in ["completed", "error"]:
+                    if task_data.get("status") in ["completed", "error", "cancelled"]:
                         break
                         
                 except asyncio.TimeoutError:

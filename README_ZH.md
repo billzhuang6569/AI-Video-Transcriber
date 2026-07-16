@@ -208,6 +208,10 @@ AI-Video-Transcriber/
 | `YTDLP_COOKIE_FILE` | yt-dlp Netscape cookies 文件路径，用于 YouTube/Bilibili 等登录态下载 | - | 否 |
 | `YTDLP_JS_RUNTIME` | yt-dlp 处理新版 YouTube 播放器挑战时使用的 JavaScript 运行时 | `node` | 否 |
 | `YTDLP_JS_RUNTIME_PATH` | JavaScript 运行时可执行文件的绝对路径（可选） | - | 否 |
+| `TIKHUB_API_TOKEN` | TikHub API Token，用于把抖音页面/分享链接解析成媒体直链 | - | 抖音页面必需；媒体直链不需要 |
+| `TIKHUB_BASE_URL` | TikHub API Base URL | `https://api.tikhub.io` | 否 |
+| `TIKHUB_REGION` | TikHub 返回媒体 CDN 的地区 | `CN` | 否 |
+| `TIKHUB_TIMEOUT_SECONDS` | TikHub 请求超时时间 | `120` | 否 |
 
 另提供可选接口 `POST /api/process-upload`，与向 `/api/process-video` 提交 `file`  multipart 字段行为一致。
 
@@ -227,9 +231,23 @@ export ELEVENLABS_API_KEY="your_elevenlabs_key"
 export ELEVENLABS_TRANSCRIPTION_MODEL="scribe_v2"
 ```
 
+如需支持抖音页面和分享链接，在服务端配置 TikHub：
+
+```bash
+export TIKHUB_API_TOKEN="your_tikhub_token"
+export TIKHUB_REGION="CN"
+```
+
+如果用户提交的已经是音频或视频直链，则会绕过 TikHub，直接进入媒体下载和转写管线。
+
 ### 服务端 API
 
 使用 `POST /api/transcribe-url` 提交媒体地址。接口会立即返回 `task_id`，然后用 `GET /api/transcribe-url/{task_id}` 轮询结果：
+
+- YouTube、Bilibili 播放页或分享链接：使用登录 Cookie，优先提取字幕，没有字幕再下载音频。
+- 抖音播放页或分享链接：先通过 TikHub 取得 `data.original_video_url`，再下载该媒体直链并转写。
+- 音视频直链：通过扩展名、已知媒体 CDN 或响应 `Content-Type` 识别，跳过页面和字幕解析。
+- 其他受 yt-dlp 支持的页面：使用通用的字幕优先策略。
 
 ```bash
 curl -X POST http://localhost:8000/api/transcribe-url \
@@ -242,7 +260,12 @@ curl -X POST http://localhost:8000/api/transcribe-url \
   }'
 
 curl http://localhost:8000/api/transcribe-url/TASK_ID
+
+# 停止运行中的任务，但保留状态记录
+curl -X POST http://localhost:8000/api/transcribe-url/TASK_ID/cancel
 ```
+
+取消操作是幂等的：重复取消会返回同一个 `cancelled` 状态；已完成或已失败的任务返回 HTTP `409`。取消后仍可继续调用轮询接口查看终态。
 
 不管底层使用 OpenRouter、ElevenLabs 还是字幕提取，响应都保持固定结构：
 
@@ -251,6 +274,7 @@ curl http://localhost:8000/api/transcribe-url/TASK_ID
   "status": "processing",
   "task_id": "TASK_ID",
   "poll_url": "/api/transcribe-url/TASK_ID",
+  "cancel_url": "/api/transcribe-url/TASK_ID/cancel",
   "progress": 45,
   "message": "音频准备完成，正在调用转写 API...",
   "data": null,
@@ -265,11 +289,16 @@ curl http://localhost:8000/api/transcribe-url/TASK_ID
   "status": "completed",
   "task_id": "TASK_ID",
   "poll_url": "/api/transcribe-url/TASK_ID",
+  "cancel_url": "/api/transcribe-url/TASK_ID/cancel",
   "progress": 100,
   "message": "转写完成",
   "data": {
     "source": {
       "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+      "resolved_url": "https://www.youtube.com/watch?v=VIDEO_ID",
+      "platform": "youtube",
+      "input_kind": "platform_page",
+      "strategy": "youtube_cookies_subtitle_first",
       "type": "audio",
       "title": "Video title"
     },

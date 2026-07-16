@@ -25,6 +25,11 @@ services:
       - YTDLP_COOKIE_FILE=${YTDLP_COOKIE_FILE:-}
       # YouTube 新版播放器解析所需，镜像已内置 Node.js
       - YTDLP_JS_RUNTIME=${YTDLP_JS_RUNTIME:-node}
+      # 抖音页面/分享链接通过 TikHub 解析为可下载媒体直链
+      - TIKHUB_API_TOKEN=${TIKHUB_API_TOKEN:-}
+      - TIKHUB_BASE_URL=${TIKHUB_BASE_URL:-https://api.tikhub.io}
+      - TIKHUB_REGION=${TIKHUB_REGION:-CN}
+      - TIKHUB_TIMEOUT_SECONDS=${TIKHUB_TIMEOUT_SECONDS:-120}
       # 服务器配置
       - HOST=0.0.0.0
       - PORT=8000

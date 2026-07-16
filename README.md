@@ -208,6 +208,10 @@ AI-Video-Transcriber/
 | `YTDLP_COOKIE_FILE` | Path to a yt-dlp Netscape cookies file for logged-in YouTube/Bilibili downloads | - | No |
 | `YTDLP_JS_RUNTIME` | JavaScript runtime used by yt-dlp for current YouTube player challenges | `node` | No |
 | `YTDLP_JS_RUNTIME_PATH` | Optional absolute path to the JavaScript runtime executable | - | No |
+| `TIKHUB_API_TOKEN` | TikHub token used to resolve Douyin page/share URLs | - | Required for Douyin pages; not required for direct media URLs |
+| `TIKHUB_BASE_URL` | TikHub API base URL | `https://api.tikhub.io` | No |
+| `TIKHUB_REGION` | CDN region requested from TikHub | `CN` | No |
+| `TIKHUB_TIMEOUT_SECONDS` | TikHub request timeout | `120` | No |
 
 An optional dedicated endpoint `POST /api/process-upload` exists with the same behavior as sending `file` to `/api/process-video`.
 
@@ -227,9 +231,23 @@ export ELEVENLABS_API_KEY="your_elevenlabs_key"
 export ELEVENLABS_TRANSCRIPTION_MODEL="scribe_v2"
 ```
 
+For Douyin page and share URLs, configure TikHub on the server:
+
+```bash
+export TIKHUB_API_TOKEN="your_tikhub_token"
+export TIKHUB_REGION="CN"
+```
+
+Direct audio/video URLs bypass TikHub and are sent straight to the media download pipeline.
+
 ### Server API
 
 Use `POST /api/transcribe-url` to submit a media URL. The API returns a `task_id` immediately, then you poll `GET /api/transcribe-url/{task_id}` until the task is completed:
+
+- YouTube and Bilibili viewing/share URLs: use logged-in yt-dlp cookies, try subtitles first, then download audio.
+- Douyin viewing/share URLs: resolve through TikHub to `data.original_video_url`, then download that media URL and transcribe it.
+- Direct media URLs: detect file extensions, known media CDNs, or media `Content-Type`; skip page/subtitle parsing.
+- Other supported pages: use the generic yt-dlp subtitle-first strategy.
 
 ```bash
 curl -X POST http://localhost:8000/api/transcribe-url \
@@ -242,7 +260,12 @@ curl -X POST http://localhost:8000/api/transcribe-url \
   }'
 
 curl http://localhost:8000/api/transcribe-url/TASK_ID
+
+# Cancel a running task without deleting its status record
+curl -X POST http://localhost:8000/api/transcribe-url/TASK_ID/cancel
 ```
+
+Cancellation is idempotent: cancelling an already cancelled task returns the same `cancelled` state. Completed or failed tasks return HTTP `409`. Polling remains available after cancellation.
 
 The response shape is stable across providers:
 
@@ -251,6 +274,7 @@ The response shape is stable across providers:
   "status": "processing",
   "task_id": "TASK_ID",
   "poll_url": "/api/transcribe-url/TASK_ID",
+  "cancel_url": "/api/transcribe-url/TASK_ID/cancel",
   "progress": 45,
   "message": "音频准备完成，正在调用转写 API...",
   "data": null,
@@ -265,11 +289,16 @@ When completed:
   "status": "completed",
   "task_id": "TASK_ID",
   "poll_url": "/api/transcribe-url/TASK_ID",
+  "cancel_url": "/api/transcribe-url/TASK_ID/cancel",
   "progress": 100,
   "message": "转写完成",
   "data": {
     "source": {
       "url": "https://www.youtube.com/watch?v=VIDEO_ID",
+      "resolved_url": "https://www.youtube.com/watch?v=VIDEO_ID",
+      "platform": "youtube",
+      "input_kind": "platform_page",
+      "strategy": "youtube_cookies_subtitle_first",
       "type": "audio",
       "title": "Video title"
     },

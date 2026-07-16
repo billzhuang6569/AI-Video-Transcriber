@@ -18,8 +18,8 @@ class VideoTranscriber {
     this.i18n = {
       en: {
         title:                   'AI Video Transcriber',
-        subtitle:                'Supports automatic transcription and AI summary for 30+ platforms',
-        video_url_placeholder:   'Paste YouTube, Tiktok, Bilibili or other platform video URLs...',
+        subtitle:                'Transcribe YouTube, Bilibili, Douyin pages and direct media links',
+        video_url_placeholder:   'Paste a page, share, or direct media URL...',
         start_transcription:     'Transcribe',
         ai_settings:             'AI Settings',
         transcription_channel:    'Transcription Channel',
@@ -74,9 +74,10 @@ class VideoTranscriber {
         error_upload_size:       (mb) => `File exceeds ${mb} MB limit`,
         api_kicker:              'API Access',
         api_title:               'Use it from any agent or script',
-        api_subtitle:            'Submit a media URL, get a task ID immediately, then poll for the normalized transcription result.',
-        api_post_desc:           'Create an async transcription task from a public media URL.',
-        api_get_desc:            'Poll until status becomes completed or error.',
+        api_subtitle:            'Submit a YouTube, Bilibili, Douyin page/share URL or a direct media URL, then poll the normalized result.',
+        api_post_desc:           'Create a routed async task from a platform page or direct media URL.',
+        api_get_desc:            'Poll until status becomes completed, cancelled, or error.',
+        api_cancel_desc:         'Stop a running task while keeping its final status available.',
         api_response_label:      'Response shape',
         api_copy_md:             'Copy API MD',
         api_copy_done:           'Copied',
@@ -86,12 +87,12 @@ class VideoTranscriber {
         api_note_format_title:   'Fixed response',
         api_note_format_body:    'Every result uses status, data, error, task_id, progress, and message.',
         api_note_keys_title:     'Server keys',
-        api_note_keys_body:      'OpenRouter and ElevenLabs keys are configured on the server; clients do not need to send keys.',
+        api_note_keys_body:      'Transcription provider and TikHub keys are configured on the server; clients do not need to send keys.',
       },
       zh: {
         title:                   'AI 视频转录器',
-        subtitle:                '粘贴 YouTube、TikTok 或任意公开视频链接，获取转录文本和 AI 摘要。',
-        video_url_placeholder:   '请输入视频链接…',
+        subtitle:                '粘贴 YouTube、Bilibili、抖音播放页或媒体直链，获取转录文本和 AI 摘要。',
+        video_url_placeholder:   '请输入播放页、分享链接或音视频直链…',
         start_transcription:     '开始转录',
         ai_settings:             'AI 设置',
         transcription_channel:    '转录渠道',
@@ -146,9 +147,10 @@ class VideoTranscriber {
         error_upload_size:       (mb) => `文件超过 ${mb} MB 限制`,
         api_kicker:              'API 调用',
         api_title:               '给 Agent 或脚本直接调用',
-        api_subtitle:            '提交媒体地址后立刻拿到 task_id，再轮询获取统一格式的转写结果。',
-        api_post_desc:           '用公开视频或音频地址创建异步转写任务。',
-        api_get_desc:            '轮询任务，直到 status 变成 completed 或 error。',
+        api_subtitle:            '提交 YouTube、Bilibili、抖音页面/分享链接或媒体直链，再轮询统一格式的结果。',
+        api_post_desc:           '根据平台页面或媒体直链自动路由并创建异步任务。',
+        api_get_desc:            '轮询任务，直到 status 变成 completed、cancelled 或 error。',
+        api_cancel_desc:         '停止运行中的任务，并保留最终状态供后续查询。',
         api_response_label:      '响应结构',
         api_copy_md:             '复制 API MD',
         api_copy_done:           '已复制',
@@ -158,7 +160,7 @@ class VideoTranscriber {
         api_note_format_title:   '固定响应',
         api_note_format_body:    '统一返回 status、data、error、task_id、progress、message。',
         api_note_keys_title:     '服务端 Key',
-        api_note_keys_body:      'OpenRouter 和 ElevenLabs Key 已在服务器配置，客户端无需传 Key。',
+        api_note_keys_body:      '转写渠道与 TikHub Key 均在服务器配置，客户端无需传 Key。',
       }
     };
 
@@ -444,8 +446,15 @@ class VideoTranscriber {
 
 - Base URL: \`${baseUrl}\`
 - 用途: 提交公开视频/音频地址，异步获取转写结果。
-- 鉴权: 当前部署已在服务端配置 OpenRouter 和 ElevenLabs Key，客户端无需传 Key。
+- 鉴权: 当前部署已在服务端配置转写渠道与 TikHub Key，客户端无需传 Key。
 - 默认渠道: ElevenLabs \`scribe_v2\`。
+
+## 地址识别与平台策略
+
+- YouTube / Bilibili 播放页或分享链接: 使用服务器 Cookie，优先字幕，没有字幕再下载音频。
+- 抖音播放页或分享链接: 先通过 TikHub 获取 data.original_video_url，再下载直链并转写。
+- 音视频直链: 根据扩展名、媒体 CDN 或响应 Content-Type 识别，跳过页面和字幕解析。
+- 其他受支持页面: 使用通用 yt-dlp 字幕优先策略。
 
 ## 1. 创建异步转写任务
 
@@ -472,6 +481,7 @@ curl -X POST "${baseUrl}/api/transcribe-url" \\
   "status": "processing",
   "task_id": "TASK_ID",
   "poll_url": "/api/transcribe-url/TASK_ID",
+  "cancel_url": "/api/transcribe-url/TASK_ID/cancel",
   "progress": 0,
   "message": "转写任务已创建",
   "data": null,
@@ -489,9 +499,18 @@ curl "${baseUrl}/api/transcribe-url/TASK_ID"
 
 - \`processing\`: 处理中
 - \`completed\`: 已完成
+- \`cancelled\`: 已取消
 - \`error\`: 失败，查看 \`error.message\`
 
-## 3. 固定响应结构
+## 3. 取消任务
+
+\`\`\`bash
+curl -X POST "${baseUrl}/api/transcribe-url/TASK_ID/cancel"
+\`\`\`
+
+取消成功后 \`status\` 为 \`cancelled\`，任务记录仍可通过轮询接口查询。重复取消会返回相同结果；已完成或失败的任务返回 HTTP 409。
+
+## 4. 固定响应结构
 
 \`\`\`json
 {
@@ -502,6 +521,10 @@ curl "${baseUrl}/api/transcribe-url/TASK_ID"
   "data": {
     "source": {
       "url": "https://example.com/video.mp4",
+      "resolved_url": "https://example.com/video.mp4",
+      "platform": "generic",
+      "input_kind": "direct_media",
+      "strategy": "direct_media_download",
       "type": "audio",
       "title": "video title"
     },
@@ -524,7 +547,8 @@ curl "${baseUrl}/api/transcribe-url/TASK_ID"
 1. 先调用 \`POST /api/transcribe-url\`。
 2. 读取返回的 \`task_id\`。
 3. 每 3-5 秒调用 \`GET /api/transcribe-url/{task_id}\`。
-4. 当 \`status=completed\` 时，优先读取 \`data.transcription.text\`。
+4. 不再需要结果时，调用 \`POST /api/transcribe-url/{task_id}/cancel\`。
+5. 当 \`status=completed\` 时，优先读取 \`data.transcription.text\`。
 `;
     }
 
@@ -534,8 +558,15 @@ curl "${baseUrl}/api/transcribe-url/TASK_ID"
 
 - Base URL: \`${baseUrl}\`
 - Purpose: Submit a public video/audio URL and receive an async transcription result.
-- Auth: This deployment stores OpenRouter and ElevenLabs keys on the server. Clients do not need to send keys.
+- Auth: This deployment stores transcription-provider and TikHub keys on the server. Clients do not need to send keys.
 - Default provider: ElevenLabs \`scribe_v2\`.
+
+## URL routing and platform strategies
+
+- YouTube / Bilibili viewing or share URLs: use server cookies, try subtitles first, then download audio.
+- Douyin viewing or share URLs: use TikHub to obtain data.original_video_url, then download and transcribe it.
+- Direct audio/video URLs: detect file extensions, media CDNs, or media Content-Type; skip page and subtitle parsing.
+- Other supported pages: use the generic yt-dlp subtitle-first strategy.
 
 ## 1. Create an async transcription task
 
@@ -562,6 +593,7 @@ Successful creation returns:
   "status": "processing",
   "task_id": "TASK_ID",
   "poll_url": "/api/transcribe-url/TASK_ID",
+  "cancel_url": "/api/transcribe-url/TASK_ID/cancel",
   "progress": 0,
   "message": "Transcription task created",
   "data": null,
@@ -579,9 +611,18 @@ Task statuses:
 
 - \`processing\`: still running
 - \`completed\`: finished
+- \`cancelled\`: cancelled
 - \`error\`: failed, inspect \`error.message\`
 
-## 3. Fixed response shape
+## 3. Cancel a task
+
+\`\`\`bash
+curl -X POST "${baseUrl}/api/transcribe-url/TASK_ID/cancel"
+\`\`\`
+
+After cancellation, \`status\` is \`cancelled\` and the task remains available through the polling endpoint. Repeated cancellation is idempotent; completed or failed tasks return HTTP 409.
+
+## 4. Fixed response shape
 
 \`\`\`json
 {
@@ -592,6 +633,10 @@ Task statuses:
   "data": {
     "source": {
       "url": "https://example.com/video.mp4",
+      "resolved_url": "https://example.com/video.mp4",
+      "platform": "generic",
+      "input_kind": "direct_media",
+      "strategy": "direct_media_download",
       "type": "audio",
       "title": "video title"
     },
@@ -614,7 +659,8 @@ Task statuses:
 1. Call \`POST /api/transcribe-url\`.
 2. Read the returned \`task_id\`.
 3. Poll \`GET /api/transcribe-url/{task_id}\` every 3-5 seconds.
-4. When \`status=completed\`, use \`data.transcription.text\` first.
+4. When the result is no longer needed, call \`POST /api/transcribe-url/{task_id}/cancel\`.
+5. When \`status=completed\`, use \`data.transcription.text\` first.
 `;
   }
 
@@ -623,18 +669,25 @@ Task statuses:
     const text = this._buildApiMarkdown();
     try {
       if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        textarea.setAttribute('readonly', '');
-        textarea.style.position = 'fixed';
-        textarea.style.left = '-9999px';
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        textarea.remove();
+        try {
+          await navigator.clipboard.writeText(text);
+          this._setCopyApiButtonState(true);
+          return;
+        } catch (e) {
+          console.warn('Clipboard API unavailable, using copy fallback:', e);
+        }
       }
+
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand('copy');
+      textarea.remove();
+      if (!copied) throw new Error('Browser rejected the copy command');
       this._setCopyApiButtonState(true);
     } catch (e) {
       console.warn('API markdown copy failed:', e);

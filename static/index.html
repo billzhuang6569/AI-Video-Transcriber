@@ -586,7 +586,7 @@
     }
     .api-endpoints {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
       margin-bottom: 14px;
     }
@@ -723,7 +723,7 @@
 <!-- Main -->
 <main class="main">
   <h1 class="page-title" data-i18n="title">AI Video Transcriber</h1>
-  <p class="page-sub" data-i18n="subtitle">Supports automatic transcription and AI summary for 30+ platforms</p>
+  <p class="page-sub" data-i18n="subtitle">Transcribe YouTube, Bilibili, Douyin pages and direct media links</p>
 
   <!-- Error -->
   <div id="errorBanner" class="error-banner">
@@ -740,7 +740,7 @@
           id="videoUrl"
           type="url"
           class="url-input"
-          placeholder="Paste YouTube, Tiktok, Bilibili or other platform video URLs..."
+          placeholder="Paste a page, share, or direct media URL..."
           data-i18n-placeholder="video_url_placeholder"
           required
         >
@@ -938,7 +938,7 @@
         </div>
         <h2 class="api-title" id="apiGuideTitle" data-i18n="api_title">Use it from any agent or script</h2>
         <p class="api-sub" data-i18n="api_subtitle">
-          Submit a media URL, get a task ID immediately, then poll for the normalized transcription result.
+          Submit a YouTube, Bilibili, Douyin page/share URL or a direct media URL, then poll the normalized result.
         </p>
       </div>
       <button type="button" class="api-copy-btn" id="copyApiMarkdownBtn">
@@ -953,14 +953,21 @@
           <span class="api-method">POST</span>
           <span class="api-path">/api/transcribe-url</span>
         </div>
-        <p class="api-desc" data-i18n="api_post_desc">Create an async transcription task from a public media URL.</p>
+        <p class="api-desc" data-i18n="api_post_desc">Create a routed async task from a platform page or direct media URL.</p>
       </div>
       <div class="api-endpoint">
         <div>
           <span class="api-method">GET</span>
           <span class="api-path">/api/transcribe-url/{task_id}</span>
         </div>
-        <p class="api-desc" data-i18n="api_get_desc">Poll until status becomes completed or error.</p>
+        <p class="api-desc" data-i18n="api_get_desc">Poll until status becomes completed, cancelled, or error.</p>
+      </div>
+      <div class="api-endpoint">
+        <div>
+          <span class="api-method">POST</span>
+          <span class="api-path">/api/transcribe-url/{task_id}/cancel</span>
+        </div>
+        <p class="api-desc" data-i18n="api_cancel_desc">Stop a running task while keeping its final status available.</p>
       </div>
     </div>
 
@@ -975,7 +982,9 @@ curl -X POST "$BASE_URL/api/transcribe-url" \
     "transcription_model": "scribe_v2"
   }'
 
-curl "$BASE_URL/api/transcribe-url/TASK_ID"</code></pre>
+curl "$BASE_URL/api/transcribe-url/TASK_ID"
+
+curl -X POST "$BASE_URL/api/transcribe-url/TASK_ID/cancel"</code></pre>
 
     <span class="api-example-label" data-i18n="api_response_label">Response shape</span>
     <pre class="api-code"><code>{
@@ -984,7 +993,15 @@ curl "$BASE_URL/api/transcribe-url/TASK_ID"</code></pre>
   "progress": 100,
   "message": "转写完成",
   "data": {
-    "source": { "url": "...", "type": "audio", "title": "..." },
+    "source": {
+      "url": "...",
+      "resolved_url": "...",
+      "platform": "youtube",
+      "input_kind": "platform_page",
+      "strategy": "youtube_cookies_subtitle_first",
+      "type": "audio",
+      "title": "..."
+    },
     "transcription": {
       "provider": "elevenlabs",
       "model": "scribe_v2",
@@ -1007,7 +1024,7 @@ curl "$BASE_URL/api/transcribe-url/TASK_ID"</code></pre>
       </div>
       <div class="api-note">
         <strong data-i18n="api_note_keys_title">Server keys</strong>
-        <span data-i18n="api_note_keys_body">OpenRouter and ElevenLabs keys are configured on the server; clients do not need to send keys.</span>
+        <span data-i18n="api_note_keys_body">Transcription provider and TikHub keys are configured on the server; clients do not need to send keys.</span>
       </div>
     </div>
   </section>
@@ -1017,6 +1034,6 @@ curl "$BASE_URL/api/transcribe-url/TASK_ID"</code></pre>
   </div>
 </main>
 
-<script src="/static/app.js?v=20260516-copy-md"></script>
+<script src="/static/app.js?v=20260716-platform-routing"></script>
 </body>
 </html>

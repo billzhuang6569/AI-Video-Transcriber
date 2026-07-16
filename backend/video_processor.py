@@ -344,6 +344,7 @@ class VideoProcessor:
         url: str,
         output_dir: Path,
         prefetched_title: Optional[str] = None,
+        referer: Optional[str] = None,
     ) -> tuple[str, str]:
         """
         下载视频并转换为m4a格式。
@@ -362,6 +363,11 @@ class VideoProcessor:
             # 更新yt-dlp选项
             ydl_opts = self._with_common_options(self.ydl_opts)
             ydl_opts['outtmpl'] = output_template
+            if referer:
+                ydl_opts['http_headers'] = {
+                    **ydl_opts.get('http_headers', {}),
+                    'Referer': referer,
+                }
             
             logger.info(f"开始下载视频: {url}")
             
