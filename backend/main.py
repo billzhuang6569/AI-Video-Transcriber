@@ -565,6 +565,8 @@ async def health_check():
         "transcription_configured": transcriber.is_configured,
         "transcription_model": transcriber.model,
         "transcription_providers_configured": configured_providers,
+        "ytdlp_cookies_configured": bool(getattr(video_processor, "cookie_file", "")),
+        "ytdlp_js_runtime": getattr(video_processor, "js_runtime", None) or None,
     }
 
 @app.post("/api/models")

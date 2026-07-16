@@ -205,6 +205,9 @@ AI-Video-Transcriber/
 | `HOST` | 服务器地址 | `0.0.0.0` | 否 |
 | `PORT` | 服务器端口 | `8000` | 否 |
 | `UPLOAD_MAX_MB` | 本地上传单文件大小上限（MB） | `200` | 否 |
+| `YTDLP_COOKIE_FILE` | yt-dlp Netscape cookies 文件路径，用于 YouTube/Bilibili 等登录态下载 | - | 否 |
+| `YTDLP_JS_RUNTIME` | yt-dlp 处理新版 YouTube 播放器挑战时使用的 JavaScript 运行时 | `node` | 否 |
+| `YTDLP_JS_RUNTIME_PATH` | JavaScript 运行时可执行文件的绝对路径（可选） | - | 否 |
 
 另提供可选接口 `POST /api/process-upload`，与向 `/api/process-video` 提交 `file`  multipart 字段行为一致。
 

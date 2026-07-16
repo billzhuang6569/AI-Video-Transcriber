@@ -1,7 +1,12 @@
+# yt-dlp uses Node.js to solve current YouTube player challenges.
+FROM node:24-bookworm-slim AS node-runtime
+
 # AI视频转录器 Docker镜像 — Python 与本地推荐环境对齐（3.12），依赖与 requirements.txt 一致
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 
 # 系统依赖（FFmpeg：链接下载与本地上传转码）
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -27,6 +32,7 @@ ENV PORT=8000
 ENV TRANSCRIPTION_PROVIDER=openai
 ENV OPENAI_TRANSCRIPTION_MAX_MB=24
 ENV UPLOAD_MAX_MB=200
+ENV YTDLP_JS_RUNTIME=node
 
 # 暴露端口
 EXPOSE 8000

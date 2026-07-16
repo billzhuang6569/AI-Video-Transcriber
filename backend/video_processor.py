@@ -15,6 +15,9 @@ class VideoProcessor:
     """视频处理器，使用yt-dlp下载和转换视频"""
     
     def __init__(self):
+        self.cookie_file = (os.getenv("YTDLP_COOKIE_FILE") or "").strip()
+        self.js_runtime = (os.getenv("YTDLP_JS_RUNTIME") or "node").strip().lower()
+        self.js_runtime_path = (os.getenv("YTDLP_JS_RUNTIME_PATH") or "").strip()
         self.ydl_opts = {
             'format': 'bestaudio/best',  # 优先下载最佳音频源
             'outtmpl': '%(title)s.%(ext)s',
@@ -31,6 +34,18 @@ class VideoProcessor:
             'no_warnings': True,
             'noplaylist': True,  # 强制只下载单个视频，不下载播放列表
         }
+
+    def _with_common_options(self, opts: dict) -> dict:
+        """Attach server-wide authentication and YouTube runtime options."""
+        opts = opts.copy()
+        if self.cookie_file:
+            opts["cookiefile"] = self.cookie_file
+        if self.js_runtime:
+            runtime_config = {}
+            if self.js_runtime_path:
+                runtime_config["path"] = self.js_runtime_path
+            opts["js_runtimes"] = {self.js_runtime: runtime_config}
+        return opts
 
     async def normalize_local_media_to_m4a(self, input_path: Path, output_dir: Path) -> str:
         """
@@ -74,7 +89,7 @@ class VideoProcessor:
 
         try:
             # 1. 快速探测：获取视频信息和字幕可用性，不下载任何内容
-            check_opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
+            check_opts = self._with_common_options({"quiet": True, "no_warnings": True, "noplaylist": True})
             with yt_dlp.YoutubeDL(check_opts) as ydl:
                 info = await asyncio.to_thread(ydl.extract_info, url, False)
 
@@ -107,7 +122,7 @@ class VideoProcessor:
 
             # 2. 仅下载字幕，跳过音视频
             sub_dir.mkdir(exist_ok=True)
-            dl_opts = {
+            dl_opts = self._with_common_options({
                 "writesubtitles": prefer_manual,
                 "writeautomaticsub": not prefer_manual,
                 "subtitlesformat": "vtt/srt/best",
@@ -117,7 +132,7 @@ class VideoProcessor:
                 "quiet": True,
                 "no_warnings": True,
                 "noplaylist": True,
-            }
+            })
             with yt_dlp.YoutubeDL(dl_opts) as ydl:
                 await asyncio.to_thread(ydl.download, [url])
 
@@ -345,7 +360,7 @@ class VideoProcessor:
             output_template = str(output_dir / f"audio_{unique_id}.%(ext)s")
             
             # 更新yt-dlp选项
-            ydl_opts = self.ydl_opts.copy()
+            ydl_opts = self._with_common_options(self.ydl_opts)
             ydl_opts['outtmpl'] = output_template
             
             logger.info(f"开始下载视频: {url}")
@@ -424,7 +439,7 @@ class VideoProcessor:
             视频信息字典
         """
         try:
-            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            with yt_dlp.YoutubeDL(self._with_common_options({'quiet': True})) as ydl:
                 info = ydl.extract_info(url, download=False)
                 return {
                     'title': info.get('title', ''),

@@ -21,12 +21,18 @@ services:
       - OPENAI_TRANSCRIPTION_MAX_MB=${OPENAI_TRANSCRIPTION_MAX_MB:-24}
       # 可选：本地上传单文件大小上限（MB），与本地环境变量一致
       - UPLOAD_MAX_MB=${UPLOAD_MAX_MB:-200}
+      # 可选：登录态 Cookie 文件需通过 volumes 挂载到容器内
+      - YTDLP_COOKIE_FILE=${YTDLP_COOKIE_FILE:-}
+      # YouTube 新版播放器解析所需，镜像已内置 Node.js
+      - YTDLP_JS_RUNTIME=${YTDLP_JS_RUNTIME:-node}
       # 服务器配置
       - HOST=0.0.0.0
       - PORT=8000
     # volumes:
       # 挂载临时文件目录，便于查看和管理下载的文件  
       # - ./temp:/app/temp
+      # Cookie 文件不要复制进镜像；按只读方式挂载，并将 YTDLP_COOKIE_FILE 指向容器内路径
+      # - ./secrets/cookies.txt:/run/secrets/yt-dlp-cookies.txt:ro
     restart: unless-stopped
     
     # 资源限制（可选）
